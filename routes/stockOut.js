@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { run, get, all, transaction, checkIdempotency, saveIdempotency } = require('../db/database');
+const { run, get, all, transaction, ensureIdempotency, finalizeIdempotency } = require('../db/database');
 const { updateInventory, checkAndCreateLowStockAlert, generateDocNo, getInventory } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
@@ -63,14 +63,8 @@ router.get('/:id', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { request_id, warehouse_id, ref_no, operator, remark, items } = req.body;
-
-  if (request_id) {
-    const cached = await checkIdempotency(request_id);
-    if (cached) {
-      return res.json({ ...cached, idempotent: true });
-    }
-  }
+  const { business_no, request_id, warehouse_id, ref_no, operator, remark, items } = req.body;
+  const idempotencyKey = business_no || request_id;
 
   if (!warehouse_id || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ success: false, message: '仓库和商品明细不能为空' });
@@ -82,7 +76,12 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const txResult = await transaction(() => {
+    const responseBody = await transaction(() => {
+      const idemResult = ensureIdempotency(idempotencyKey, 'STOCK_OUT');
+      if (!idemResult.isFirst) {
+        return { ...idemResult.cachedResult, idempotent: true };
+      }
+
       const warehouse = get('SELECT * FROM warehouses WHERE id = ?', [warehouse_id]);
       if (!warehouse) throw new Error('仓库不存在');
 
@@ -134,38 +133,41 @@ router.post('/', async (req, res) => {
         if (alert) alerts.push(alert);
       }
 
-      return { docId, alerts };
+      const doc = get(`
+        SELECT d.*, w.name as warehouse_name
+        FROM stock_documents d
+        LEFT JOIN warehouses w ON d.warehouse_id = w.id
+        WHERE d.id = ?
+      `, [docId]);
+      doc.items = all(`
+        SELECT i.*, p.name as product_name, p.sku, p.unit
+        FROM stock_document_items i
+        LEFT JOIN products p ON i.product_id = p.id
+        WHERE i.document_id = ?
+      `, [docId]);
+
+      let message = '出库成功';
+      if (alerts.length > 0) {
+        message += `，注意：有${alerts.length}个商品触发低库存预警`;
+      }
+
+      const result = { success: true, data: doc, alerts, message };
+      finalizeIdempotency(idempotencyKey, result);
+      return result;
     });
-
-    const doc = get(`
-      SELECT d.*, w.name as warehouse_name
-      FROM stock_documents d
-      LEFT JOIN warehouses w ON d.warehouse_id = w.id
-      WHERE d.id = ?
-    `, [txResult.docId]);
-    doc.items = all(`
-      SELECT i.*, p.name as product_name, p.sku, p.unit
-      FROM stock_document_items i
-      LEFT JOIN products p ON i.product_id = p.id
-      WHERE i.document_id = ?
-    `, [txResult.docId]);
-
-    let message = '出库成功';
-    if (txResult.alerts.length > 0) {
-      message += `，注意：有${txResult.alerts.length}个商品触发低库存预警`;
-    }
-
-    const responseBody = { success: true, data: doc, alerts: txResult.alerts, message };
-
-    if (request_id) {
-      await saveIdempotency(request_id, 'STOCK_OUT', responseBody);
-    }
 
     res.json(responseBody);
   } catch (err) {
     const msg = err.message;
-    const isClient = /不存在|库存不足/.test(msg);
-    res.status(isClient ? 400 : 500).json({ success: false, message: msg });
+    let statusCode = 500;
+    if (msg === '正在处理中...稍后重试') {
+      statusCode = 409;
+    } else if (msg === '仓库不存在') {
+      statusCode = 404;
+    } else if (/不存在|库存不足/.test(msg)) {
+      statusCode = 400;
+    }
+    res.status(statusCode).json({ success: false, message: msg });
   }
 });
 

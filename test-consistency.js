@@ -613,6 +613,186 @@ async function doSelfCheck() {
     idemLogs.length === 1,
     `日志条数=${idemLogs.length}`);
 
+  section('9. 同业务号高并发三接口测试（10次并发同业务号入库+10次并发同业务号出库+10次并发同业务号调拨，各接口只认第一次）');
+
+  await resetInventory();
+  console.log('  步骤1：已通过盘点将所有库存重置为0');
+
+  await request('/api/stock-in', { method: 'POST' }, {
+    warehouse_id: warehouse1, operator: '场景9打底入库', remark: '场景9：入库100件打底',
+    items: [{ product_id: productId, quantity: 100, unit_price: 1 }]
+  });
+  console.log('  步骤2：已通过普通入库（不带业务号）在WH001入库商品1 100件打底');
+
+  const invBeforeAll = (await request('/api/inventory')).body.data;
+  const beforeInStock_W1 = (invBeforeAll.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+  const beforeInStock_W2 = (invBeforeAll.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+  console.log(`  步骤3：记录初始值 → WH001商品1=${beforeInStock_W1}, WH002商品1=${beforeInStock_W2}`);
+
+  const BUSINESS_IN_NO = `BIZ_IN_SC9_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const BUSINESS_OUT_NO = `BIZ_OUT_SC9_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const BUSINESS_TF_NO = `BIZ_TF_SC9_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+  {
+    console.log(`\n  ┌─ 子场景A：同BUSINESS_IN_NO并发10次入库（每次3件WH001商品1）`);
+    const N = 10;
+    const QTY = 3;
+    const inPromises9 = [];
+    for (let i = 0; i < N; i++) {
+      inPromises9.push(request('/api/stock-in', { method: 'POST' }, {
+        business_no: BUSINESS_IN_NO,
+        warehouse_id: warehouse1, operator: `场景9并发入库#${i}`, remark: `场景9并发入库 business_no=${BUSINESS_IN_NO}`,
+        items: [{ product_id: productId, quantity: QTY, unit_price: 1 }]
+      }));
+    }
+    const inResults9 = await Promise.all(inPromises9);
+    const successIn9 = inResults9.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+    const idemIn9 = inResults9.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+    const procIn9 = inResults9.filter(r => r.status === 409).length;
+    const failedIn9 = N - successIn9 - idemIn9 - procIn9;
+    console.log(`  提交${N}次 → 首次成功${successIn9}次，幂等命中${idemIn9}次，处理中${procIn9}次，失败${failedIn9}次`);
+
+    assert('【入库】成功次数 + 幂等命中次数 + 处理中次数 = 10', successIn9 + idemIn9 + procIn9 === N,
+      `实际：${successIn9}+${idemIn9}+${procIn9}=${successIn9 + idemIn9 + procIn9} != 10，失败${failedIn9}次`);
+    assert('【入库】首次成功次数 恰好为 1', successIn9 === 1, `实际首次成功=${successIn9}`);
+
+    const invAfterIn = (await request('/api/inventory')).body.data;
+    const w1AfterIn = (invAfterIn.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+    const expectedAfterIn = beforeInStock_W1 + QTY;
+    assert(`【入库】WH001库存增量应恰好为${QTY}（只认一次） → ${beforeInStock_W1} + ${QTY} = ${expectedAfterIn}`,
+      w1AfterIn === expectedAfterIn, `实际WH001=${w1AfterIn}`);
+
+    const firstInSuccess = inResults9.find(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent)
+      || inResults9.find(r => r.status === 200 && r.body && r.body.success);
+    const firstInDocId = firstInSuccess?.body?.data?.id;
+    let inDocCountByBiz = 0;
+    if (firstInDocId) {
+      const doc = (await request(`/api/stock-in/${firstInDocId}`)).body;
+      inDocCountByBiz = doc?.success ? 1 : 0;
+    }
+    assert('【入库】数据库入库单中以该business_no关联的单据数 = 1', inDocCountByBiz === 1,
+      `通过首次成功docId=${firstInDocId} 查询结果=${inDocCountByBiz}`);
+
+    let inLogCountByBiz = 0;
+    if (firstInDocId) {
+      const allLogs = (await request('/api/inventory/logs?limit=100000')).body.data || [];
+      inLogCountByBiz = allLogs.filter(l => l.ref_type === 'STOCK_IN' && l.ref_id === firstInDocId && l.change_type === 'IN').length;
+    }
+    assert('【入库】IN日志对应只产生1条', inLogCountByBiz === 1, `实际IN日志条数=${inLogCountByBiz}`);
+  }
+
+  {
+    console.log(`\n  ├─ 子场景B：同BUSINESS_OUT_NO并发10次出库（每次2件WH001商品1）`);
+    const N = 10;
+    const QTY = 2;
+    const invBeforeOut = (await request('/api/inventory')).body.data;
+    const beforeOutStock_W1 = (invBeforeOut.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+    console.log(`  出库前 WH001商品1=${beforeOutStock_W1}`);
+
+    const outPromises9 = [];
+    for (let i = 0; i < N; i++) {
+      outPromises9.push(request('/api/stock-out', { method: 'POST' }, {
+        business_no: BUSINESS_OUT_NO,
+        warehouse_id: warehouse1, operator: `场景9并发出库#${i}`, remark: `场景9并发出库 business_no=${BUSINESS_OUT_NO}`,
+        items: [{ product_id: productId, quantity: QTY }]
+      }));
+    }
+    const outResults9 = await Promise.all(outPromises9);
+    const successOut9 = outResults9.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+    const idemOut9 = outResults9.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+    const procOut9 = outResults9.filter(r => r.status === 409).length;
+    const failedOut9 = N - successOut9 - idemOut9 - procOut9;
+    console.log(`  提交${N}次 → 首次成功${successOut9}次，幂等命中${idemOut9}次，处理中${procOut9}次，失败${failedOut9}次`);
+
+    assert('【出库】成功次数 + 幂等命中次数 + 处理中次数 = 10', successOut9 + idemOut9 + procOut9 === N,
+      `实际：${successOut9}+${idemOut9}+${procOut9}=${successOut9 + idemOut9 + procOut9} != 10，失败${failedOut9}次`);
+    assert('【出库】首次成功次数 恰好为 1', successOut9 === 1, `实际首次成功=${successOut9}`);
+
+    const invAfterOut = (await request('/api/inventory')).body.data;
+    const w1AfterOut = (invAfterOut.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+    const expectedAfterOut = beforeOutStock_W1 - QTY;
+    assert(`【出库】WH001库存只减${QTY}（只认一次） → ${beforeOutStock_W1} - ${QTY} = ${expectedAfterOut}`,
+      w1AfterOut === expectedAfterOut, `实际WH001=${w1AfterOut}`);
+
+    const firstOutSuccess = outResults9.find(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent)
+      || outResults9.find(r => r.status === 200 && r.body && r.body.success);
+    const firstOutDocId = firstOutSuccess?.body?.data?.id;
+    let outDocCountByBiz = 0;
+    if (firstOutDocId) {
+      const doc = (await request(`/api/stock-out/${firstOutDocId}`)).body;
+      outDocCountByBiz = doc?.success ? 1 : 0;
+    }
+    assert('【出库】数据库出库单中以该business_no关联的单据数 = 1', outDocCountByBiz === 1,
+      `通过首次成功docId=${firstOutDocId} 查询结果=${outDocCountByBiz}`);
+
+    let outLogCountByBiz = 0;
+    if (firstOutDocId) {
+      const allLogs = (await request('/api/inventory/logs?limit=100000')).body.data || [];
+      outLogCountByBiz = allLogs.filter(l => l.ref_type === 'STOCK_OUT' && l.ref_id === firstOutDocId && l.change_type === 'OUT').length;
+    }
+    assert('【出库】OUT日志对应只产生1条', outLogCountByBiz === 1, `实际OUT日志条数=${outLogCountByBiz}`);
+  }
+
+  {
+    console.log(`\n  └─ 子场景C：同BUSINESS_TF_NO并发10次调拨（每次5件从WH001到WH002商品1）`);
+    const N = 10;
+    const QTY = 5;
+    const invBeforeTf = (await request('/api/inventory')).body.data;
+    const beforeTfStock_W1 = (invBeforeTf.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+    const beforeTfStock_W2 = (invBeforeTf.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+    console.log(`  调拨前 WH001商品1=${beforeTfStock_W1}, WH002商品1=${beforeTfStock_W2}`);
+
+    const tfPromises9 = [];
+    for (let i = 0; i < N; i++) {
+      tfPromises9.push(request('/api/transfers', { method: 'POST' }, {
+        business_no: BUSINESS_TF_NO,
+        from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+        operator: `场景9并发调拨#${i}`, remark: `场景9并发调拨 business_no=${BUSINESS_TF_NO}`,
+        items: [{ product_id: productId, quantity: QTY }]
+      }));
+    }
+    const tfResults9 = await Promise.all(tfPromises9);
+    const successTf9 = tfResults9.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+    const idemTf9 = tfResults9.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+    const procTf9 = tfResults9.filter(r => r.status === 409).length;
+    const failedTf9 = N - successTf9 - idemTf9 - procTf9;
+    console.log(`  提交${N}次 → 首次成功${successTf9}次，幂等命中${idemTf9}次，处理中${procTf9}次，失败${failedTf9}次`);
+
+    assert('【调拨】成功次数 + 幂等命中次数 + 处理中次数 = 10', successTf9 + idemTf9 + procTf9 === N,
+      `实际：${successTf9}+${idemTf9}+${procTf9}=${successTf9 + idemTf9 + procTf9} != 10，失败${failedTf9}次`);
+    assert('【调拨】首次成功次数 恰好为 1', successTf9 === 1, `实际首次成功=${successTf9}`);
+
+    const invAfterTf = (await request('/api/inventory')).body.data;
+    const w1AfterTf = (invAfterTf.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+    const w2AfterTf = (invAfterTf.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+    const expectedW1AfterTf = beforeTfStock_W1 - QTY;
+    const expectedW2AfterTf = beforeTfStock_W2 + QTY;
+    assert(`【调拨】WH001应减${QTY} → ${beforeTfStock_W1} - ${QTY} = ${expectedW1AfterTf}`,
+      w1AfterTf === expectedW1AfterTf, `实际WH001=${w1AfterTf}`);
+    assert(`【调拨】WH002应加${QTY} → ${beforeTfStock_W2} + ${QTY} = ${expectedW2AfterTf}`,
+      w2AfterTf === expectedW2AfterTf, `实际WH002=${w2AfterTf}`);
+
+    const firstTfSuccess = tfResults9.find(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent)
+      || tfResults9.find(r => r.status === 200 && r.body && r.body.success);
+    const firstTfId = firstTfSuccess?.body?.data?.id;
+    let tfDocCountByBiz = 0;
+    if (firstTfId) {
+      const doc = (await request(`/api/transfers/${firstTfId}`)).body;
+      tfDocCountByBiz = doc?.success ? 1 : 0;
+    }
+    assert('【调拨】数据库调拨单中以该business_no关联的单据数 = 1', tfDocCountByBiz === 1,
+      `通过首次成功transferId=${firstTfId} 查询结果=${tfDocCountByBiz}`);
+
+    let tfOutLogCount = 0, tfInLogCount = 0;
+    if (firstTfId) {
+      const allLogs = (await request('/api/inventory/logs?limit=100000')).body.data || [];
+      tfOutLogCount = allLogs.filter(l => l.ref_type === 'TRANSFER_OUT' && l.ref_id === firstTfId && l.change_type === 'OUT').length;
+      tfInLogCount = allLogs.filter(l => l.ref_type === 'TRANSFER_IN' && l.ref_id === firstTfId && l.change_type === 'IN').length;
+    }
+    assert('【调拨】TRANSFER_OUT日志应只产生1条', tfOutLogCount === 1, `实际TRANSFER_OUT日志条数=${tfOutLogCount}`);
+    assert('【调拨】TRANSFER_IN日志应只产生1条', tfInLogCount === 1, `实际TRANSFER_IN日志条数=${tfInLogCount}`);
+  }
+
   await doSelfCheck();
 
   console.log(`\n═══════════════════════════════════════════════════════════════`);

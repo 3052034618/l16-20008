@@ -263,17 +263,44 @@ async function initDatabase() {
 
   tables.push(`
     CREATE TABLE IF NOT EXISTS idempotency_keys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE NOT NULL,
+      key TEXT PRIMARY KEY,
       type TEXT NOT NULL,
-      result_json TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      status TEXT NOT NULL,
+      result_json TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+      expires_at TEXT NOT NULL
     )
   `);
 
   for (const sql of tables) {
     db.run(sql);
+  }
+
+  try {
+    const cols = db.exec("PRAGMA table_info(idempotency_keys)");
+    const colNames = cols[0]?.values?.map(c => c[1]) || [];
+    if (!colNames.includes('status')) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS idempotency_keys_new (
+          key TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          result_json TEXT,
+          created_at TEXT DEFAULT (datetime('now', 'localtime')),
+          updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+          expires_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`
+        INSERT OR IGNORE INTO idempotency_keys_new (key, type, status, result_json, expires_at, created_at)
+        SELECT key, type, 'DONE', result_json, expires_at, created_at FROM idempotency_keys
+      `);
+      db.exec(`DROP TABLE IF EXISTS idempotency_keys`);
+      db.exec(`ALTER TABLE idempotency_keys_new RENAME TO idempotency_keys`);
+    }
+  } catch (e) {
+    console.log('迁移 idempotency_keys 表时跳过:', e.message);
   }
 
   db.run(`DELETE FROM idempotency_keys WHERE expires_at <= datetime('now', 'localtime')`);
@@ -309,30 +336,66 @@ initDatabase().catch(err => {
 
 const IDEMPOTENCY_TTL_DAYS = 30;
 
-function checkIdempotencySync(key) {
-  const row = get(
-    `SELECT result_json FROM idempotency_keys WHERE key = ? AND expires_at > datetime('now', 'localtime')`,
+function runInTransaction(sql, params = []) {
+  if (!db) throw new Error('数据库未就绪');
+  const stmt = db.prepare(sql);
+  if (params && params.length) stmt.bind(params);
+  stmt.step();
+  const changes = db.getRowsModified();
+  const lastID = db.exec('SELECT last_insert_rowid() as id')[0]?.values[0]?.[0];
+  stmt.free();
+  return { lastID, changes };
+}
+
+function getInTransaction(sql, params = []) {
+  if (!db) throw new Error('数据库未就绪');
+  const stmt = db.prepare(sql);
+  if (params && params.length) stmt.bind(params);
+  let result = null;
+  if (stmt.step()) {
+    result = stmt.getAsObject();
+  }
+  stmt.free();
+  return result;
+}
+
+function ensureIdempotency(key, type) {
+  if (!key) {
+    return { isFirst: true };
+  }
+  const result = runInTransaction(
+    `INSERT OR IGNORE INTO idempotency_keys (key, type, status, created_at, updated_at, expires_at)
+     VALUES (?, ?, 'PROCESSING', datetime('now', 'localtime'), datetime('now', 'localtime'), datetime('now', 'localtime', '+${IDEMPOTENCY_TTL_DAYS} days'))`,
+    [key, type]
+  );
+  if (result.changes === 1) {
+    return { isFirst: true };
+  }
+  const row = getInTransaction(
+    `SELECT status, result_json FROM idempotency_keys WHERE key = ?`,
     [key]
   );
-  if (row && row.result_json) {
-    return JSON.parse(row.result_json);
+  if (!row) {
+    return { isFirst: true };
   }
-  return null;
+  if (row.status === 'DONE') {
+    return {
+      isFirst: false,
+      cachedResult: row.result_json ? JSON.parse(row.result_json) : null
+    };
+  }
+  if (row.status === 'PROCESSING') {
+    throw new Error('正在处理中...稍后重试');
+  }
+  return { isFirst: true };
 }
 
-function saveIdempotencySync(key, type, resultJSON) {
-  run(
-    `INSERT OR REPLACE INTO idempotency_keys (key, type, result_json, expires_at) VALUES (?, ?, ?, datetime('now', 'localtime', '+${IDEMPOTENCY_TTL_DAYS} days'))`,
-    [key, type, JSON.stringify(resultJSON)]
+function finalizeIdempotency(key, resultObject) {
+  if (!key) return;
+  runInTransaction(
+    `UPDATE idempotency_keys SET status = 'DONE', result_json = ?, updated_at = datetime('now', 'localtime') WHERE key = ?`,
+    [JSON.stringify(resultObject), key]
   );
-}
-
-function checkIdempotency(key) {
-  return serializedWrite(() => checkIdempotencySync(key));
-}
-
-function saveIdempotency(key, type, resultJSON) {
-  return serializedWrite(() => saveIdempotencySync(key, type, resultJSON));
 }
 
 module.exports = {
@@ -347,6 +410,6 @@ module.exports = {
   serialize,
   transaction,
   runTransactionSync,
-  checkIdempotency,
-  saveIdempotency
+  ensureIdempotency,
+  finalizeIdempotency
 };

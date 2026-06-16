@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { run, get, all, transaction, checkIdempotency, saveIdempotency } = require('../db/database');
+const { run, get, all, transaction, ensureIdempotency, finalizeIdempotency } = require('../db/database');
 const { updateInventory, checkAndCreateLowStockAlert, generateDocNo, getInventory } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
@@ -70,14 +70,8 @@ router.get('/:id', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { request_id, from_warehouse_id, to_warehouse_id, operator, remark, items } = req.body;
-
-  if (request_id) {
-    const cached = await checkIdempotency(request_id);
-    if (cached) {
-      return res.json({ ...cached, idempotent: true });
-    }
-  }
+  const { business_no, request_id, from_warehouse_id, to_warehouse_id, operator, remark, items } = req.body;
+  const idempotencyKey = business_no || request_id;
 
   if (!from_warehouse_id || !to_warehouse_id) {
     return res.status(400).json({ success: false, message: '源仓库和目标仓库不能为空' });
@@ -95,7 +89,12 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const txResult = await transaction(() => {
+    const responseBody = await transaction(() => {
+      const idemResult = ensureIdempotency(idempotencyKey, 'TRANSFER');
+      if (!idemResult.isFirst) {
+        return { ...idemResult.cachedResult, idempotent: true };
+      }
+
       const fromWh = get('SELECT * FROM warehouses WHERE id = ?', [from_warehouse_id]);
       const toWh = get('SELECT * FROM warehouses WHERE id = ?', [to_warehouse_id]);
       if (!fromWh) throw new Error('源仓库不存在');
@@ -155,41 +154,42 @@ router.post('/', async (req, res) => {
         if (alert) alerts.push(alert);
       }
 
-      return { tfId, alerts };
+      const transfer = get(`
+        SELECT t.*,
+               fw.name as from_warehouse_name,
+               tw.name as to_warehouse_name
+        FROM transfers t
+        LEFT JOIN warehouses fw ON t.from_warehouse_id = fw.id
+        LEFT JOIN warehouses tw ON t.to_warehouse_id = tw.id
+        WHERE t.id = ?
+      `, [tfId]);
+      transfer.items = all(`
+        SELECT i.*, p.name as product_name, p.sku, p.unit
+        FROM transfer_items i
+        LEFT JOIN products p ON i.product_id = p.id
+        WHERE i.transfer_id = ?
+      `, [tfId]);
+
+      let message = '调拨成功';
+      if (alerts.length > 0) {
+        message += `，注意：源仓库有${alerts.length}个商品触发低库存预警`;
+      }
+
+      const result = { success: true, data: transfer, alerts, message };
+      finalizeIdempotency(idempotencyKey, result);
+      return result;
     });
-
-    const transfer = get(`
-      SELECT t.*,
-             fw.name as from_warehouse_name,
-             tw.name as to_warehouse_name
-      FROM transfers t
-      LEFT JOIN warehouses fw ON t.from_warehouse_id = fw.id
-      LEFT JOIN warehouses tw ON t.to_warehouse_id = tw.id
-      WHERE t.id = ?
-    `, [txResult.tfId]);
-    transfer.items = all(`
-      SELECT i.*, p.name as product_name, p.sku, p.unit
-      FROM transfer_items i
-      LEFT JOIN products p ON i.product_id = p.id
-      WHERE i.transfer_id = ?
-    `, [txResult.tfId]);
-
-    let message = '调拨成功';
-    if (txResult.alerts.length > 0) {
-      message += `，注意：源仓库有${txResult.alerts.length}个商品触发低库存预警`;
-    }
-
-    const responseBody = { success: true, data: transfer, alerts: txResult.alerts, message };
-
-    if (request_id) {
-      await saveIdempotency(request_id, 'TRANSFER', responseBody);
-    }
 
     res.json(responseBody);
   } catch (err) {
     const msg = err.message;
-    const isClient = /不存在|库存不足|不能相同/.test(msg);
-    res.status(isClient ? 400 : 500).json({ success: false, message: msg });
+    let statusCode = 500;
+    if (msg === '正在处理中...稍后重试') {
+      statusCode = 409;
+    } else if (/不存在|库存不足|不能相同/.test(msg)) {
+      statusCode = 400;
+    }
+    res.status(statusCode).json({ success: false, message: msg });
   }
 });
 

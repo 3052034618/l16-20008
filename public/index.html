@@ -298,7 +298,28 @@
 
     async function fetchJSON(url, options = {}) {
       const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
-      return await res.json();
+      const data = await res.json();
+      if (!res.ok) {
+        const err = new Error(data.message || '请求失败');
+        err.status = res.status;
+        err.data = data;
+        throw err;
+      }
+      return data;
+    }
+
+    function getDraftId(tabKey, prefix) {
+      const storageKey = `draft_id_${tabKey}`;
+      let draftId = localStorage.getItem(storageKey);
+      if (!draftId) {
+        draftId = generateRequestId(prefix);
+        localStorage.setItem(storageKey, draftId);
+      }
+      return draftId;
+    }
+
+    function clearDraftId(tabKey) {
+      localStorage.removeItem(`draft_id_${tabKey}`);
     }
 
     async function loadDashboard() {
@@ -553,14 +574,16 @@
     async function openStockInModal() {
       const whOpts = await getWarehouseOptions();
       const prodOpts = await getProductOptions();
-      const requestId = generateRequestId('SI');
+      const draftId = getDraftId('stockIn', 'SI');
       document.getElementById('modalContent').innerHTML = `
         <h3>新建入库单</h3>
         <div class="form-grid">
           <div class="form-group"><label>入库仓库 *</label><select id="si-wh">${whOpts}</select></div>
           <div class="form-group"><label>操作人</label><input type="text" id="si-op" value="管理员"></div>
+          <div class="form-group"><label>业务单号（可选）</label><input type="text" id="si-business-no" placeholder="如：采购单号CG20240101"></div>
           <div class="form-group"><label>关联单号</label><input type="text" id="si-ref"></div>
         </div>
+        <input type="hidden" id="si-draft-id" value="${draftId}">
         <div class="form-group"><label>备注</label><input type="text" id="si-remark"></div>
         <div class="items-section">
           <p class="section-subtitle">商品明细</p>
@@ -569,7 +592,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn" onclick="closeModal()">取消</button>
-          <button class="btn btn-primary" id="si-submit-btn" onclick="submitStockIn('${requestId}')">确认入库</button>
+          <button class="btn btn-primary" id="si-submit-btn" onclick="submitStockIn()">确认入库</button>
         </div>
       `;
       window._prodOpts = prodOpts;
@@ -590,7 +613,7 @@
       document.getElementById('si-items').appendChild(div);
     }
 
-    async function submitStockIn(requestId) {
+    async function submitStockIn() {
       const btn = document.getElementById('si-submit-btn');
       if (btn.disabled) return;
       btn.disabled = true;
@@ -607,34 +630,48 @@
         btn.textContent = originalText;
         return showToast('请添加商品', 'warning');
       }
+      const businessNo = document.getElementById('si-business-no').value.trim();
+      const draftId = document.getElementById('si-draft-id').value;
       const data = {
-        request_id: requestId,
         warehouse_id: parseInt(document.getElementById('si-wh').value),
         operator: document.getElementById('si-op').value.trim(),
         ref_no: document.getElementById('si-ref').value.trim(),
         remark: document.getElementById('si-remark').value.trim(),
         items
       };
+      if (businessNo) {
+        data.business_no = businessNo;
+      } else {
+        data.request_id = draftId;
+      }
       try {
         const res = await fetchJSON(`${API}/stock-in`, { method: 'POST', body: JSON.stringify(data) });
+        let docData = res.data || {};
+        const docId = docData.id || (docData.data && docData.data.id);
+        const docNo = docData.doc_no || (docData.data && docData.data.doc_no) || '';
         if (res.idempotent) {
-          const docNo = res.data?.doc_no || (res.data?.data?.doc_no) || '';
-          showToast(`该业务已处理完成（重复提交已忽略），单号${docNo}`, 'warning');
+          showToast(`业务已处理，单号${docNo}，不会重复记账`, 'warning');
         } else if (res.success) {
-          showToast(res.message);
-        } else {
-          showToast(res.message, 'error');
+          showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
         }
         if (res.success || res.idempotent) {
+          clearDraftId('stockIn');
           closeModal();
           loadStockIn();
+          if (docId) {
+            setTimeout(() => showStockInDetail(docId), 100);
+          }
         }
       } catch (e) {
-          showToast('请求失败', 'error');
-        } finally {
-          btn.disabled = false;
-          btn.textContent = originalText;
+        if (e.status === 409) {
+          showToast('正在处理中，请稍后刷新列表查看结果', 'warning');
+        } else {
+          showToast(e.message || '请求失败', 'error');
         }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     }
 
     async function loadStockOutFilters() {
@@ -714,14 +751,16 @@
     async function openStockOutModal() {
       const whOpts = await getWarehouseOptions();
       const prodOpts = await getProductOptions();
-      const requestId = generateRequestId('SO');
+      const draftId = getDraftId('stockOut', 'SO');
       document.getElementById('modalContent').innerHTML = `
         <h3>新建出库单</h3>
         <div class="form-grid">
           <div class="form-group"><label>出库仓库 *</label><select id="so-wh">${whOpts}</select></div>
           <div class="form-group"><label>操作人</label><input type="text" id="so-op" value="管理员"></div>
+          <div class="form-group"><label>业务单号（可选）</label><input type="text" id="so-business-no" placeholder="如：销售单号XS20240101"></div>
           <div class="form-group"><label>关联单号</label><input type="text" id="so-ref"></div>
         </div>
+        <input type="hidden" id="so-draft-id" value="${draftId}">
         <div class="form-group"><label>备注</label><input type="text" id="so-remark"></div>
         <div class="items-section">
           <p class="section-subtitle">商品明细</p>
@@ -730,7 +769,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn" onclick="closeModal()">取消</button>
-          <button class="btn btn-primary" id="so-submit-btn" onclick="submitStockOut('${requestId}')">确认出库</button>
+          <button class="btn btn-primary" id="so-submit-btn" onclick="submitStockOut()">确认出库</button>
         </div>
       `;
       window._prodOpts = prodOpts;
@@ -751,7 +790,7 @@
       document.getElementById('so-items').appendChild(div);
     }
 
-    async function submitStockOut(requestId) {
+    async function submitStockOut() {
       const btn = document.getElementById('so-submit-btn');
       if (btn.disabled) return;
       btn.disabled = true;
@@ -768,30 +807,44 @@
         btn.textContent = originalText;
         return showToast('请添加商品', 'warning');
       }
+      const businessNo = document.getElementById('so-business-no').value.trim();
+      const draftId = document.getElementById('so-draft-id').value;
       const data = {
-        request_id: requestId,
         warehouse_id: parseInt(document.getElementById('so-wh').value),
         operator: document.getElementById('so-op').value.trim(),
         ref_no: document.getElementById('so-ref').value.trim(),
         remark: document.getElementById('so-remark').value.trim(),
         items
       };
+      if (businessNo) {
+        data.business_no = businessNo;
+      } else {
+        data.request_id = draftId;
+      }
       try {
         const res = await fetchJSON(`${API}/stock-out`, { method: 'POST', body: JSON.stringify(data) });
+        let docData = res.data || {};
+        const docId = docData.id || (docData.data && docData.data.id);
+        const docNo = docData.doc_no || (docData.data && docData.data.doc_no) || '';
         if (res.idempotent) {
-          const docNo = res.data?.doc_no || (res.data?.data?.doc_no) || '';
-          showToast(`该业务已处理完成（重复提交已忽略），单号${docNo}`, 'warning');
+          showToast(`业务已处理，单号${docNo}，不会重复记账`, 'warning');
         } else if (res.success) {
           showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
-        } else {
-          showToast(res.message, 'error');
         }
         if (res.success || res.idempotent) {
+          clearDraftId('stockOut');
           closeModal();
           loadStockOut();
+          if (docId) {
+            setTimeout(() => showStockOutDetail(docId), 100);
+          }
         }
       } catch (e) {
-        showToast('请求失败', 'error');
+        if (e.status === 409) {
+          showToast('正在处理中，请稍后刷新列表查看结果', 'warning');
+        } else {
+          showToast(e.message || '请求失败', 'error');
+        }
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -879,14 +932,16 @@
     async function openTransferModal() {
       const whOpts = await getWarehouseOptions();
       const prodOpts = await getProductOptions();
-      const requestId = generateRequestId('TF');
+      const draftId = getDraftId('transfers', 'TF');
       document.getElementById('modalContent').innerHTML = `
         <h3>新建调拨单</h3>
         <div class="form-grid">
           <div class="form-group"><label>源仓库 *</label><select id="tf-from">${whOpts}</select></div>
           <div class="form-group"><label>目标仓库 *</label><select id="tf-to">${whOpts}</select></div>
           <div class="form-group"><label>操作人</label><input type="text" id="tf-op" value="管理员"></div>
+          <div class="form-group"><label>业务单号（可选）</label><input type="text" id="tf-business-no" placeholder="如：调拨申请单号DB20240101"></div>
         </div>
+        <input type="hidden" id="tf-draft-id" value="${draftId}">
         <div class="form-group"><label>备注</label><input type="text" id="tf-remark"></div>
         <div class="items-section">
           <p class="section-subtitle">调拨明细</p>
@@ -895,7 +950,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn" onclick="closeModal()">取消</button>
-          <button class="btn btn-primary" id="tf-submit-btn" onclick="submitTransfer('${requestId}')">确认调拨</button>
+          <button class="btn btn-primary" id="tf-submit-btn" onclick="submitTransfer()">确认调拨</button>
         </div>
       `;
       window._prodOpts = prodOpts;
@@ -916,7 +971,7 @@
       document.getElementById('tf-items').appendChild(div);
     }
 
-    async function submitTransfer(requestId) {
+    async function submitTransfer() {
       const btn = document.getElementById('tf-submit-btn');
       if (btn.disabled) return;
       btn.disabled = true;
@@ -938,29 +993,43 @@
         btn.textContent = originalText;
         return showToast('请添加商品', 'warning');
       }
+      const businessNo = document.getElementById('tf-business-no').value.trim();
+      const draftId = document.getElementById('tf-draft-id').value;
       const data = {
-        request_id: requestId,
         from_warehouse_id: fromWh, to_warehouse_id: toWh,
         operator: document.getElementById('tf-op').value.trim(),
         remark: document.getElementById('tf-remark').value.trim(),
         items
       };
+      if (businessNo) {
+        data.business_no = businessNo;
+      } else {
+        data.request_id = draftId;
+      }
       try {
         const res = await fetchJSON(`${API}/transfers`, { method: 'POST', body: JSON.stringify(data) });
+        let docData = res.data || {};
+        const docId = docData.id || (docData.data && docData.data.id);
+        const docNo = docData.transfer_no || (docData.data && docData.data.transfer_no) || '';
         if (res.idempotent) {
-          const docNo = res.data?.transfer_no || (res.data?.data?.transfer_no) || '';
-          showToast(`该业务已处理完成（重复提交已忽略），单号${docNo}`, 'warning');
+          showToast(`业务已处理，单号${docNo}，不会重复记账`, 'warning');
         } else if (res.success) {
           showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
-        } else {
-          showToast(res.message, 'error');
         }
         if (res.success || res.idempotent) {
+          clearDraftId('transfers');
           closeModal();
           loadTransfers();
+          if (docId) {
+            setTimeout(() => showTransferDetail(docId), 100);
+          }
         }
       } catch (e) {
-        showToast('请求失败', 'error');
+        if (e.status === 409) {
+          showToast('正在处理中，请稍后刷新列表查看结果', 'warning');
+        } else {
+          showToast(e.message || '请求失败', 'error');
+        }
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
