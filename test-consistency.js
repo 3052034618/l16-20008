@@ -1,0 +1,420 @@
+const http = require('http');
+
+const BASE = 'http://localhost:3000';
+
+function request(path, options = {}, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(BASE + path);
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname + url.search,
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(data) });
+        } catch (e) {
+          resolve({ status: res.statusCode, body: { raw: data } });
+        }
+      });
+    });
+    req.on('error', reject);
+    if (body !== undefined) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+let pass = 0, fail = 0;
+function assert(name, cond, detail = '') {
+  if (cond) {
+    console.log(`  ✅ ${name}`);
+    pass++;
+  } else {
+    console.log(`  ❌ ${name}  ${detail}`);
+    fail++;
+  }
+}
+function section(title) {
+  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`📋 ${title}`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+}
+
+let productId = null;
+let warehouse1 = null;
+let warehouse2 = null;
+
+(async () => {
+  console.log('等待服务启动...');
+  for (let i = 0; i < 30; i++) {
+    try {
+      const r = await request('/api/health');
+      if (r.status === 200 && r.body.success) break;
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  section('0. 准备测试数据（查询商品/仓库）');
+  const prods = (await request('/api/products')).body.data;
+  productId = prods.find(p => p.sku === 'SKU001').id;
+  console.log(`  测试商品: SKU001 (id=${productId})`);
+  const whs = (await request('/api/warehouses')).body.data;
+  warehouse1 = whs[0].id;
+  warehouse2 = whs[1].id;
+  console.log(`  仓库1: ${whs[0].code} (id=${warehouse1})  仓库2: ${whs[1].code} (id=${warehouse2})`);
+
+  // 先清空目标仓库存（防止之前的测试残留），用盘点归零
+  async function resetInventory() {
+    const inv = (await request('/api/inventory')).body.data || [];
+    for (const row of inv) {
+      await request('/api/stocktakes', { method: 'POST' }, {
+        warehouse_id: row.warehouse_id, operator: 'TEST_RESET', remark: '测试重置',
+        items: [{ product_id: row.product_id, actual_quantity: 0 }]
+      });
+    }
+  }
+  await resetInventory();
+  console.log('  已重置所有库存为0');
+
+  // ============================================================
+  section('1. 同一商品同仓库连续并发入库（N次同时提交）');
+  const N_IN = 20;
+  const qtyPerIn = 3;
+
+  const inPromises = [];
+  for (let i = 0; i < N_IN; i++) {
+    inPromises.push(request('/api/stock-in', { method: 'POST' }, {
+      warehouse_id: warehouse1, operator: `并发入库#${i}`, remark: `并发测试 ${i}`,
+      items: [{ product_id: productId, quantity: qtyPerIn, unit_price: 100 }]
+    }));
+  }
+  const inResults = await Promise.all(inPromises);
+  const successIn = inResults.filter(r => r.status === 200 && r.body.success).length;
+  const failedIn = N_IN - successIn;
+  console.log(`  共提交 ${N_IN} 次入库，成功 ${successIn} 次，失败 ${failedIn} 次`);
+
+  assert('所有入库请求应全部成功', successIn === N_IN, `成功${successIn} != ${N_IN}`);
+  assert('失败次数应为0', failedIn === 0);
+
+  const invAfterIn = (await request('/api/inventory')).body.data;
+  const wh1Prod1 = invAfterIn.find(r => r.warehouse_id === warehouse1 && r.product_id === productId);
+  const expectedAfterIn = N_IN * qtyPerIn;
+  assert(`仓库1商品库存应 = ${N_IN} * ${qtyPerIn} = ${expectedAfterIn}`,
+    wh1Prod1 && wh1Prod1.quantity === expectedAfterIn,
+    `实际: ${wh1Prod1 ? wh1Prod1.quantity : 'NULL'}`);
+
+  const summary = (await request('/api/inventory/summary')).body.data;
+  const sum = summary.find(s => s.product_id === productId);
+  assert(`汇总接口商品总库存应为 ${expectedAfterIn}`,
+    sum && sum.total_quantity === expectedAfterIn,
+    `实际: ${sum ? sum.total_quantity : 'NULL'}`);
+
+  // ============================================================
+  section('2. 同一商品同仓库连续并发出库（超过库存应被精准拦截）');
+  const START_QTY = expectedAfterIn; // 当前库存
+  const QTY_PER_OUT = 5;
+  const N_OUT = 15; // 15*5=75 > 60，应有 60/5=12次成功，3次失败
+
+  const outPromises = [];
+  for (let i = 0; i < N_OUT; i++) {
+    outPromises.push(request('/api/stock-out', { method: 'POST' }, {
+      warehouse_id: warehouse1, operator: `并发出库#${i}`,
+      items: [{ product_id: productId, quantity: QTY_PER_OUT }]
+    }));
+  }
+  const outResults = await Promise.all(outPromises);
+  const successOut = outResults.filter(r => r.status === 200 && r.body.success).length;
+  const failedOut = outResults.filter(r => r.body && !r.body.success).length;
+  const expectedSuccess = Math.floor(START_QTY / QTY_PER_OUT); // 12
+  const expectedFailed = N_OUT - expectedSuccess;
+  console.log(`  提交 ${N_OUT} 次出库 (每次 ${QTY_PER_OUT})`);
+  console.log(`  成功 ${successOut} 次 (预期 ${expectedSuccess})，失败 ${failedOut} 次 (预期 ${expectedFailed})`);
+
+  assert(`成功次数应精确为 ${expectedSuccess}`,
+    successOut === expectedSuccess,
+    `实际成功${successOut}，会导致库存算错`);
+  assert(`失败次数应精确为 ${expectedFailed}`, failedOut === expectedFailed);
+
+  for (const r of outResults) {
+    if (r.status === 200 && !r.body.success) {
+      console.log(`  警告: 200 但 success=false: ${JSON.stringify(r.body)}`);
+    }
+  }
+
+  const invAfterOut = (await request('/api/inventory')).body.data;
+  const wh1Prod1After = invAfterOut.find(r => r.warehouse_id === warehouse1 && r.product_id === productId);
+  const expectedAfterOut = START_QTY - successOut * QTY_PER_OUT;
+  assert(`出库后库存应 = ${START_QTY} - ${successOut}*${QTY_PER_OUT} = ${expectedAfterOut}`,
+    wh1Prod1After && wh1Prod1After.quantity === expectedAfterOut,
+    `实际: ${wh1Prod1After ? wh1Prod1After.quantity : 'NULL'}`);
+
+  const outDocCount = (await request('/api/stock-out')).body.data.length;
+  console.log(`  当前出库单数量: ${outDocCount}`);
+
+  // ============================================================
+  section('3. 库存不足出库测试（单笔超额）');
+  const beforeInv = (await request('/api/inventory')).body.data
+    .find(r => r.warehouse_id === warehouse1 && r.product_id === productId).quantity;
+  const overQty = beforeInv + 999;
+
+  const r = await request('/api/stock-out', { method: 'POST' }, {
+    warehouse_id: warehouse1, operator: '超额出库',
+    items: [{ product_id: productId, quantity: overQty }]
+  });
+  assert('超额出库应返回400', r.status === 400, `status=${r.status}`);
+  assert('返回信息应包含「库存不足」',
+    r.body && r.body.message && r.body.message.includes('库存不足'),
+    `实际message: ${JSON.stringify(r.body.message)}`);
+
+  const afterInv = (await request('/api/inventory')).body.data
+    .find(r => r.warehouse_id === warehouse1 && r.product_id === productId).quantity;
+  assert(`失败后库存应保持不变 (${beforeInv})`, afterInv === beforeInv,
+    `实际: ${afterInv}`);
+
+  // ============================================================
+  section('4. 跨仓调拨（正常 + 失败回滚测试）');
+
+  // 先给仓1补满 100
+  await request('/api/stock-in', { method: 'POST' }, {
+    warehouse_id: warehouse1, operator: '调拨前补货',
+    items: [{ product_id: productId, quantity: 100, unit_price: 1 }]
+  });
+  const curInvW1 = (await request('/api/inventory')).body.data
+    .find(r => r.warehouse_id === warehouse1 && r.product_id === productId).quantity;
+  const curInvW2Orig = ((await request('/api/inventory')).body.data
+    .find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+  console.log(`  调拨前: 仓1=${curInvW1}, 仓2=${curInvW2Orig}`);
+
+  const TF_QTY = 25;
+  const tfOk = await request('/api/transfers', { method: 'POST' }, {
+    from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+    operator: '正常调拨', items: [{ product_id: productId, quantity: TF_QTY }]
+  });
+  assert('正常调拨应返回200成功', tfOk.status === 200 && tfOk.body.success,
+    `status=${tfOk.status} body=${JSON.stringify(tfOk.body)}`);
+
+  const afterTf = (await request('/api/inventory')).body.data;
+  const w1After = afterTf.find(r => r.warehouse_id === warehouse1 && r.product_id === productId).quantity;
+  const w2After = (afterTf.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+  console.log(`  调拨后: 仓1=${w1After}, 仓2=${w2After}`);
+
+  assert(`仓1应减少 ${TF_QTY} (=${curInvW1 - TF_QTY})`,
+    w1After === curInvW1 - TF_QTY, `实际${w1After}`);
+  assert(`仓2应增加 ${TF_QTY} (=${curInvW2Orig + TF_QTY})`,
+    w2After === curInvW2Orig + TF_QTY, `实际${w2After}`);
+
+  // 测试调拨失败回滚：源仓不够，整个调拨应被回滚（单据不创建，库存不变）
+  const hugeQty = w1After + 1000;
+  const beforeRollback = JSON.stringify((await request('/api/inventory')).body.data
+    .map(r => ({ w: r.warehouse_id, p: r.product_id, q: r.quantity }))
+    .sort((a, b) => a.w - b.w || a.p - b.p));
+  const transferCountBefore = (await request('/api/transfers')).body.data.length;
+
+  const tfFail = await request('/api/transfers', { method: 'POST' }, {
+    from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+    operator: '失败调拨', items: [{ product_id: productId, quantity: hugeQty }]
+  });
+
+  assert(`超额调拨(${hugeQty})应返回400`, tfFail.status === 400,
+    `status=${tfFail.status} body=${JSON.stringify(tfFail.body)}`);
+
+  const afterRollback = JSON.stringify((await request('/api/inventory')).body.data
+    .map(r => ({ w: r.warehouse_id, p: r.product_id, q: r.quantity }))
+    .sort((a, b) => a.w - b.w || a.p - b.p));
+  const transferCountAfter = (await request('/api/transfers')).body.data.length;
+
+  assert('调拨失败后，所有仓库库存应保持原样', beforeRollback === afterRollback,
+    `\n     前: ${beforeRollback}\n     后: ${afterRollback}`);
+  assert('调拨失败后，不应新增调拨单', transferCountBefore === transferCountAfter,
+    `前后单据数: ${transferCountBefore} -> ${transferCountAfter}`);
+
+  // ============================================================
+  section('5. 库存一致性校验（库存表 vs 汇总表 vs 出入库/调拨日志）');
+
+  // 5a. 分仓库存 sum == 汇总库存
+  const detail = (await request('/api/inventory')).body.data;
+  const perWarehouse = {};
+  for (const d of detail) {
+    perWarehouse[`${d.product_id}_${d.warehouse_id}`] = d.quantity;
+  }
+  const detailTotal = {};
+  for (const d of detail) {
+    detailTotal[d.product_id] = (detailTotal[d.product_id] || 0) + d.quantity;
+  }
+
+  const summaryRows = (await request('/api/inventory/summary')).body.data;
+  let matchSum = true;
+  for (const s of summaryRows) {
+    if ((detailTotal[s.product_id] || 0) !== s.total_quantity) {
+      matchSum = false;
+      console.log(`  ⚠️  product=${s.product_id} 明细汇总=${detailTotal[s.product_id]}  !=  汇总表=${s.total_quantity}`);
+    }
+  }
+  assert('分仓库存SUM == 汇总表total_quantity（按商品）', matchSum);
+
+  // 5b. 按商品+仓库：IN日志合计 - OUT日志合计 == 当前库存
+  const allLogs = (await request('/api/inventory/logs?limit=100000')).body.data;
+  const logPerKey = {};
+  for (const log of allLogs) {
+    const k = `${log.product_id}_${log.warehouse_id}`;
+    if (!logPerKey[k]) logPerKey[k] = { in: 0, out: 0, adjust: 0 };
+    if (log.change_type === 'IN') logPerKey[k].in += log.change_quantity;
+    else if (log.change_type === 'OUT') logPerKey[k].out += -log.change_quantity;
+    else logPerKey[k].adjust += log.change_quantity;
+  }
+
+  let matchLog = true;
+  const allKeys = new Set([...Object.keys(perWarehouse), ...Object.keys(logPerKey)]);
+  for (const k of allKeys) {
+    const inv = perWarehouse[k] || 0;
+    const l = logPerKey[k] || { in: 0, out: 0, adjust: 0 };
+    const expected = l.in - l.out + l.adjust;
+    if (inv !== expected) {
+      matchLog = false;
+      console.log(`  ⚠️  [${k}] 库存=${inv}  vs  日志IN(${l.in})-OUT(${l.out})+ADJ(${l.adjust})=${expected}`);
+    }
+  }
+  assert('每个(商品+仓库)：IN合计 - OUT合计 + ADJUST合计 == 当前库存', matchLog);
+
+  // 5c. 日志完整性：每个出库/入库/调拨单的明细和日志变动数一致
+  const inDocs = (await request('/api/stock-in')).body.data;
+  const outDocs = (await request('/api/stock-out')).body.data;
+  const tfDocs = (await request('/api/transfers')).body.data;
+
+  const countLogByRef = (refType, refId, changeType) => {
+    return allLogs.filter(l => l.ref_type === refType && l.ref_id === refId &&
+      (changeType ? l.change_type === changeType : true)).length;
+  };
+
+  let docOk = true;
+  for (const d of inDocs) {
+    const items = (await request(`/api/stock-in/${d.id}`)).body.data.items;
+    const c = countLogByRef('STOCK_IN', d.id, 'IN');
+    if (c !== items.length) {
+      docOk = false;
+      console.log(`  ⚠️  入库单${d.id} 明细${items.length}项 vs IN日志${c}条`);
+    }
+  }
+  for (const d of outDocs) {
+    const items = (await request(`/api/stock-out/${d.id}`)).body.data.items;
+    const c = countLogByRef('STOCK_OUT', d.id, 'OUT');
+    if (c !== items.length) {
+      docOk = false;
+      console.log(`  ⚠️  出库单${d.id} 明细${items.length}项 vs OUT日志${c}条`);
+    }
+  }
+  for (const d of tfDocs) {
+    const items = (await request(`/api/transfers/${d.id}`)).body.data.items;
+    const cOut = countLogByRef('TRANSFER_OUT', d.id, 'OUT');
+    const cIn = countLogByRef('TRANSFER_IN', d.id, 'IN');
+    if (cOut !== items.length || cIn !== items.length) {
+      docOk = false;
+      console.log(`  ⚠️  调拨单${d.id} 明细${items.length}项 vs OUT日志${cOut}条 + IN日志${cIn}条`);
+    }
+  }
+  assert('每张单据明细行数 == 对应inventory_logs行数（入/出各正确）', docOk);
+
+  // ============================================================
+  section('6. 多浏览器/快速重复提交场景：同一请求发多次（幂等性验证）');
+
+  const duplicateBody = {
+    warehouse_id: warehouse1, operator: '重复提交测试',
+    items: [{ product_id: productId, quantity: 2 }]
+  };
+  const dupCount = 8;
+  const dupPromises = [];
+  for (let i = 0; i < dupCount; i++) {
+    dupPromises.push(request('/api/stock-in', { method: 'POST' }, duplicateBody));
+  }
+  const dupResults = await Promise.all(dupPromises);
+  const dupSuccess = dupResults.filter(r => r.status === 200 && r.body.success).length;
+  console.log(`  ${dupCount}次重复提交入库，成功 ${dupSuccess} 次（都应成功，因为每次都是新单据）`);
+  assert('重复提交入库（非同一业务单号）应全部成功', dupSuccess === dupCount);
+
+  const curInv = (await request('/api/inventory')).body.data
+    .find(r => r.warehouse_id === warehouse1 && r.product_id === productId).quantity;
+  const preDup = w1After + 100; // 前面补了100，减去调拨后是w1After+100
+  // w1After 是调拨后的 （w1After = curInvW1 - TF_QTY; 然后补了100 再重复入了 8*2）
+  console.log(`  当前仓1库存: ${curInv}（重复入库应新增 dupSuccess*2 = ${dupSuccess * 2}）`);
+
+  // ============================================================
+  section('7. 并发混合：入+出+调 同时进行，总库存守恒检查');
+
+  // 先把仓2和仓1清零，仓1设为固定起点 500
+  await resetInventory();
+  await request('/api/stock-in', { method: 'POST' }, {
+    warehouse_id: warehouse1, operator: '混合测试起点',
+    items: [{ product_id: productId, quantity: 500 }]
+  });
+  const startInv = (await request('/api/inventory')).body.data;
+  const startTotal = startInv.reduce((s, r) => s + (r.product_id === productId ? r.quantity : 0), 0);
+  // 只统计混合测试产生的新日志：获取起始最大logId
+  const startLogs = (await request('/api/inventory/logs?limit=1')).body.data;
+  const startLogId = startLogs.length > 0 ? startLogs[0].id : 0;
+
+  const MIX = [];
+  const PLAN = {
+    inTotal: 0, outTotal: 0, tfOutTotal: 0, tfInTotal: 0
+  };
+  for (let i = 0; i < 30; i++) {
+    const r = Math.random();
+    if (r < 0.33) {
+      const q = 1 + Math.floor(Math.random() * 5);
+      PLAN.inTotal += q;
+      MIX.push(request('/api/stock-in', { method: 'POST' }, {
+        warehouse_id: warehouse1, items: [{ product_id: productId, quantity: q }]
+      }));
+    } else if (r < 0.66) {
+      const q = 1 + Math.floor(Math.random() * 3);
+      PLAN.outTotal += q; // 但可能被拒，所以这里只是上限
+      MIX.push(request('/api/stock-out', { method: 'POST' }, {
+        warehouse_id: warehouse1, items: [{ product_id: productId, quantity: q }]
+      }));
+    } else {
+      const q = 1 + Math.floor(Math.random() * 4);
+      MIX.push(request('/api/transfers', { method: 'POST' }, {
+        from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+        items: [{ product_id: productId, quantity: q }]
+      }));
+    }
+  }
+
+  console.log(`  提交 ${MIX.length} 个混合请求（入库/出库/调拨）`);
+  console.log(`  起始两仓商品合计库存 = ${startTotal}`);
+  await Promise.all(MIX);
+
+  const mixInv = (await request('/api/inventory')).body.data;
+  const w1Final = (mixInv.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+  const w2Final = (mixInv.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+  const totalFinal = w1Final + w2Final;
+  console.log(`  结束: 仓1=${w1Final} 仓2=${w2Final} 两仓合计=${totalFinal}`);
+
+  // 只取混合测试产生的日志（logId > 起始logId）
+  const mixLogs = (await request('/api/inventory/logs?limit=100000')).body.data
+    .filter(l => l.id > startLogId && l.product_id === productId);
+  let inSum = 0, outSum = 0;
+  for (const l of mixLogs) {
+    if (l.change_type === 'IN') inSum += l.change_quantity;
+    else if (l.change_type === 'OUT') outSum += -l.change_quantity;
+  }
+  const expectedByLog = startTotal + inSum - outSum;
+
+  assert('两仓合计库存 == 起始库存 + 新IN合计 - 新OUT合计', totalFinal === expectedByLog,
+    `\n     两仓合计=${totalFinal}  日志推算=${startTotal} + ${inSum} - ${outSum} = ${expectedByLog}`);
+  assert('库存不能为负（所有行都 ≥ 0）',
+    mixInv.every(r => r.quantity >= 0),
+    mixInv.filter(r => r.quantity < 0).map(r => `${r.product_name}@${r.warehouse_name}=-${-r.quantity}`).join(','));
+
+  // ============================================================
+  console.log(`\n═══════════════════════════════════════════════════════════════`);
+  console.log(`🎯 测试完成：通过 ${pass} / ${pass + fail}`);
+  console.log(`═══════════════════════════════════════════════════════════════`);
+  process.exit(fail > 0 ? 1 : 0);
+})().catch(e => {
+  console.error('测试脚本异常：', e);
+  process.exit(2);
+});

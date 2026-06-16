@@ -6,6 +6,17 @@ const dbPath = path.join(__dirname, '..', 'inventory.db');
 let db = null;
 let inTransaction = false;
 
+let _writeChain = Promise.resolve();
+function serializedWrite(fn) {
+  const result = _writeChain.then(() => fn());
+  _writeChain = result.catch(() => {});
+  return result;
+}
+
+let _readyResolve = null;
+const ready = new Promise(resolve => { _readyResolve = resolve; });
+let isReady = false;
+
 function save() {
   if (inTransaction) return;
   const data = db.export();
@@ -14,9 +25,10 @@ function save() {
 }
 
 function run(sql, params = []) {
+  if (!db) throw new Error('数据库未就绪');
   const stmt = db.prepare(sql);
   if (params && params.length) stmt.bind(params);
-  const result = stmt.step();
+  stmt.step();
   const changes = db.getRowsModified();
   const lastID = db.exec('SELECT last_insert_rowid() as id')[0]?.values[0]?.[0];
   stmt.free();
@@ -25,6 +37,7 @@ function run(sql, params = []) {
 }
 
 function get(sql, params = []) {
+  if (!db) throw new Error('数据库未就绪');
   const stmt = db.prepare(sql);
   if (params && params.length) stmt.bind(params);
   let result = null;
@@ -36,6 +49,7 @@ function get(sql, params = []) {
 }
 
 function all(sql, params = []) {
+  if (!db) throw new Error('数据库未就绪');
   const stmt = db.prepare(sql);
   if (params && params.length) stmt.bind(params);
   const results = [];
@@ -47,6 +61,7 @@ function all(sql, params = []) {
 }
 
 function exec(sql) {
+  if (!db) throw new Error('数据库未就绪');
   db.run(sql);
   save();
 }
@@ -55,11 +70,12 @@ function serialize(fn) {
   return fn();
 }
 
-async function transaction(fn) {
+function runTransactionSync(fn) {
+  if (!db) throw new Error('数据库未就绪');
   inTransaction = true;
   try {
-    db.run('BEGIN TRANSACTION');
-    const result = await fn();
+    db.run('BEGIN EXCLUSIVE TRANSACTION');
+    const result = fn();
     db.run('COMMIT');
     inTransaction = false;
     save();
@@ -70,6 +86,10 @@ async function transaction(fn) {
     save();
     throw err;
   }
+}
+
+async function transaction(fn) {
+  return serializedWrite(() => Promise.resolve(runTransactionSync(fn)));
 }
 
 async function initDatabase() {
@@ -242,7 +262,7 @@ async function initDatabase() {
   `);
 
   for (const sql of tables) {
-    exec(sql);
+    db.run(sql);
   }
 
   const warehouseCount = get('SELECT COUNT(*) as cnt FROM warehouses');
@@ -264,17 +284,26 @@ async function initDatabase() {
   }
 
   save();
+  isReady = true;
+  _readyResolve(true);
   console.log('数据库初始化完成');
 }
 
-initDatabase().catch(console.error);
+initDatabase().catch(err => {
+  console.error('数据库初始化失败:', err);
+  _readyResolve(false);
+});
 
 module.exports = {
+  ready,
+  isReady: () => isReady,
+  serializedWrite,
   db,
   run,
   get,
   all,
   exec,
   serialize,
-  transaction
+  transaction,
+  runTransactionSync
 };

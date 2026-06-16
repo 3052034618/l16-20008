@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { all } = require('../db/database');
+const { all, get } = require('../db/database');
 
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   const { warehouse_id, product_id, keyword, low_stock_only } = req.query;
   let sql = `
     SELECT i.*, p.sku, p.name as product_name, p.category, p.unit, p.spec,
@@ -14,29 +14,15 @@ router.get('/', async (req, res) => {
     WHERE 1=1
   `;
   const params = [];
-
-  if (warehouse_id) {
-    sql += ' AND i.warehouse_id = ?';
-    params.push(warehouse_id);
-  }
-  if (product_id) {
-    sql += ' AND i.product_id = ?';
-    params.push(product_id);
-  }
-  if (keyword) {
-    sql += ' AND (p.name LIKE ? OR p.sku LIKE ?)';
-    params.push(`%${keyword}%`, `%${keyword}%`);
-  }
-  if (low_stock_only === 'true') {
-    sql += ' AND i.quantity <= p.low_stock_threshold';
-  }
+  if (warehouse_id) { sql += ' AND i.warehouse_id = ?'; params.push(warehouse_id); }
+  if (product_id) { sql += ' AND i.product_id = ?'; params.push(product_id); }
+  if (keyword) { sql += ' AND (p.name LIKE ? OR p.sku LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (low_stock_only === 'true') { sql += ' AND i.quantity <= p.low_stock_threshold'; }
   sql += ' ORDER BY i.id DESC';
-
-  const inventory = await all(sql, params);
-  res.json({ success: true, data: inventory });
+  res.json({ success: true, data: all(sql, params) });
 });
 
-router.get('/summary', async (req, res) => {
+router.get('/summary', (req, res) => {
   const { product_id, keyword } = req.query;
   let sql = `
     SELECT i.product_id, p.sku, p.name as product_name, p.category, p.unit, p.spec,
@@ -51,22 +37,13 @@ router.get('/summary', async (req, res) => {
     WHERE 1=1
   `;
   const params = [];
-
-  if (product_id) {
-    sql += ' AND i.product_id = ?';
-    params.push(product_id);
-  }
-  if (keyword) {
-    sql += ' AND (p.name LIKE ? OR p.sku LIKE ?)';
-    params.push(`%${keyword}%`, `%${keyword}%`);
-  }
+  if (product_id) { sql += ' AND i.product_id = ?'; params.push(product_id); }
+  if (keyword) { sql += ' AND (p.name LIKE ? OR p.sku LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' GROUP BY i.product_id ORDER BY total_quantity DESC';
-
-  const summary = await all(sql, params);
-  res.json({ success: true, data: summary });
+  res.json({ success: true, data: all(sql, params) });
 });
 
-router.get('/logs', async (req, res) => {
+router.get('/logs', (req, res) => {
   const { product_id, warehouse_id, change_type, ref_type, start_date, end_date, limit } = req.query;
   let sql = `
     SELECT l.*, p.sku, p.name as product_name, p.unit,
@@ -77,39 +54,15 @@ router.get('/logs', async (req, res) => {
     WHERE 1=1
   `;
   const params = [];
-
-  if (product_id) {
-    sql += ' AND l.product_id = ?';
-    params.push(product_id);
-  }
-  if (warehouse_id) {
-    sql += ' AND l.warehouse_id = ?';
-    params.push(warehouse_id);
-  }
-  if (change_type) {
-    sql += ' AND l.change_type = ?';
-    params.push(change_type);
-  }
-  if (ref_type) {
-    sql += ' AND l.ref_type = ?';
-    params.push(ref_type);
-  }
-  if (start_date) {
-    sql += ' AND l.created_at >= ?';
-    params.push(start_date);
-  }
-  if (end_date) {
-    sql += ' AND l.created_at <= ?';
-    params.push(end_date);
-  }
+  if (product_id) { sql += ' AND l.product_id = ?'; params.push(product_id); }
+  if (warehouse_id) { sql += ' AND l.warehouse_id = ?'; params.push(warehouse_id); }
+  if (change_type) { sql += ' AND l.change_type = ?'; params.push(change_type); }
+  if (ref_type) { sql += ' AND l.ref_type = ?'; params.push(ref_type); }
+  if (start_date) { sql += ' AND l.created_at >= ?'; params.push(start_date); }
+  if (end_date) { sql += ' AND l.created_at <= ?'; params.push(end_date); }
   sql += ' ORDER BY l.id DESC';
-  if (limit) {
-    sql += ' LIMIT ?';
-    params.push(parseInt(limit));
-  }
-
-  const logs = await all(sql, params);
-  res.json({ success: true, data: logs });
+  if (limit) { sql += ' LIMIT ?'; params.push(parseInt(limit)); }
+  res.json({ success: true, data: all(sql, params) });
 });
 
 module.exports = router;
