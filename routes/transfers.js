@@ -4,7 +4,7 @@ const { run, get, all, transaction, ensureIdempotency, finalizeIdempotency } = r
 const { updateInventory, checkAndCreateLowStockAlert, generateDocNo, getInventory } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
-  const { from_warehouse_id, to_warehouse_id, start_date, end_date, product_id, doc_no } = req.query;
+  const { from_warehouse_id, to_warehouse_id, start_date, end_date, product_id, doc_no, business_no } = req.query;
   let sql = `
     SELECT DISTINCT t.*,
            fw.name as from_warehouse_name,
@@ -19,6 +19,7 @@ router.get('/', (req, res) => {
   if (from_warehouse_id) { conditions.push('t.from_warehouse_id = ?'); params.push(from_warehouse_id); }
   if (to_warehouse_id) { conditions.push('t.to_warehouse_id = ?'); params.push(to_warehouse_id); }
   if (doc_no) { conditions.push('t.transfer_no LIKE ?'); params.push(`%${doc_no}%`); }
+  if (business_no) { conditions.push('t.business_no LIKE ?'); params.push(`%${business_no}%`); }
   if (start_date) { conditions.push('t.created_at >= ?'); params.push(start_date); }
   if (end_date) { conditions.push('t.created_at <= ?'); params.push(end_date); }
 
@@ -125,9 +126,9 @@ router.post('/', async (req, res) => {
 
       const transfer_no = generateDocNo('TF');
       const tfInfo = run(`
-        INSERT INTO transfers (transfer_no, from_warehouse_id, to_warehouse_id, operator, remark, status)
-        VALUES (?, ?, ?, ?, ?, 1)
-      `, [transfer_no, from_warehouse_id, to_warehouse_id, operator || 'system', remark || null]);
+        INSERT INTO transfers (transfer_no, from_warehouse_id, to_warehouse_id, business_no, operator, remark, status)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `, [transfer_no, from_warehouse_id, to_warehouse_id, business_no || null, operator || 'system', remark || null]);
 
       const tfId = tfInfo.lastID;
       const alerts = [];
@@ -176,7 +177,7 @@ router.post('/', async (req, res) => {
       }
 
       const result = { success: true, data: transfer, alerts, message };
-      finalizeIdempotency(idempotencyKey, result);
+      finalizeIdempotency(idempotencyKey, 'TRANSFER', result);
       return result;
     });
 

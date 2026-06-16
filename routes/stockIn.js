@@ -4,7 +4,7 @@ const { run, get, all, transaction, ensureIdempotency, finalizeIdempotency } = r
 const { updateInventory, generateDocNo } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
-  const { warehouse_id, start_date, end_date, product_id, doc_no } = req.query;
+  const { warehouse_id, start_date, end_date, product_id, doc_no, business_no } = req.query;
   let sql = `
     SELECT DISTINCT d.*, w.name as warehouse_name
     FROM stock_documents d
@@ -15,6 +15,7 @@ router.get('/', (req, res) => {
 
   if (warehouse_id) { conditions.push('d.warehouse_id = ?'); params.push(warehouse_id); }
   if (doc_no) { conditions.push('d.doc_no LIKE ?'); params.push(`%${doc_no}%`); }
+  if (business_no) { conditions.push('d.business_no LIKE ?'); params.push(`%${business_no}%`); }
   if (start_date) { conditions.push('d.created_at >= ?'); params.push(start_date); }
   if (end_date) { conditions.push('d.created_at <= ?'); params.push(end_date); }
 
@@ -99,9 +100,9 @@ router.post('/', async (req, res) => {
 
       const doc_no = generateDocNo('IN');
       const docInfo = run(`
-        INSERT INTO stock_documents (doc_no, doc_type, warehouse_id, ref_no, operator, remark, status)
-        VALUES (?, 'IN', ?, ?, ?, ?, 1)
-      `, [doc_no, warehouse_id, ref_no || null, operator || 'system', remark || null]);
+        INSERT INTO stock_documents (doc_no, doc_type, warehouse_id, ref_no, business_no, operator, remark, status)
+        VALUES (?, 'IN', ?, ?, ?, ?, ?, 1)
+      `, [doc_no, warehouse_id, ref_no || null, business_no || null, operator || 'system', remark || null]);
 
       const docId = docInfo.lastID;
 
@@ -132,7 +133,7 @@ router.post('/', async (req, res) => {
       `, [docId]);
 
       const result = { success: true, data: doc, message: '入库成功' };
-      finalizeIdempotency(idempotencyKey, result);
+      finalizeIdempotency(idempotencyKey, 'STOCK_IN', result);
       return result;
     });
 

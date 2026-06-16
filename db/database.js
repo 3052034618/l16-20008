@@ -154,6 +154,7 @@ async function initDatabase() {
       doc_type TEXT NOT NULL,
       warehouse_id INTEGER NOT NULL,
       ref_no TEXT,
+      business_no TEXT,
       operator TEXT,
       remark TEXT,
       status INTEGER DEFAULT 1,
@@ -181,6 +182,7 @@ async function initDatabase() {
       transfer_no TEXT UNIQUE NOT NULL,
       from_warehouse_id INTEGER NOT NULL,
       to_warehouse_id INTEGER NOT NULL,
+      business_no TEXT,
       operator TEXT,
       remark TEXT,
       status INTEGER DEFAULT 1,
@@ -263,13 +265,14 @@ async function initDatabase() {
 
   tables.push(`
     CREATE TABLE IF NOT EXISTS idempotency_keys (
-      key TEXT PRIMARY KEY,
+      key TEXT NOT NULL,
       type TEXT NOT NULL,
       status TEXT NOT NULL,
       result_json TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime')),
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (key, type)
     )
   `);
 
@@ -278,24 +281,55 @@ async function initDatabase() {
   }
 
   try {
-    const cols = db.exec("PRAGMA table_info(idempotency_keys)");
-    const colNames = cols[0]?.values?.map(c => c[1]) || [];
-    if (!colNames.includes('status')) {
+    const sdCols = db.exec("PRAGMA table_info(stock_documents)");
+    const sdColNames = sdCols[0]?.values?.map(c => c[1]) || [];
+    if (!sdColNames.includes('business_no')) {
+      db.exec(`ALTER TABLE stock_documents ADD COLUMN business_no TEXT`);
+    }
+  } catch (e) {
+    console.log('迁移 stock_documents 表时跳过:', e.message);
+  }
+
+  try {
+    const tfCols = db.exec("PRAGMA table_info(transfers)");
+    const tfColNames = tfCols[0]?.values?.map(c => c[1]) || [];
+    if (!tfColNames.includes('business_no')) {
+      db.exec(`ALTER TABLE transfers ADD COLUMN business_no TEXT`);
+    }
+  } catch (e) {
+    console.log('迁移 transfers 表时跳过:', e.message);
+  }
+
+  try {
+    const pkInfo = db.exec("PRAGMA table_info(idempotency_keys)");
+    const pkCols = pkInfo[0]?.values?.filter(c => c[5] === 1).map(c => c[1]) || [];
+    if (pkCols.length === 1 && pkCols[0] === 'key') {
       db.exec(`
         CREATE TABLE IF NOT EXISTS idempotency_keys_new (
-          key TEXT PRIMARY KEY,
+          key TEXT NOT NULL,
           type TEXT NOT NULL,
           status TEXT NOT NULL,
           result_json TEXT,
           created_at TEXT DEFAULT (datetime('now', 'localtime')),
           updated_at TEXT DEFAULT (datetime('now', 'localtime')),
-          expires_at TEXT NOT NULL
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (key, type)
         )
       `);
-      db.exec(`
-        INSERT OR IGNORE INTO idempotency_keys_new (key, type, status, result_json, expires_at, created_at)
-        SELECT key, type, 'DONE', result_json, expires_at, created_at FROM idempotency_keys
-      `);
+      const cols = db.exec("PRAGMA table_info(idempotency_keys)");
+      const colNames = cols[0]?.values?.map(c => c[1]) || [];
+      const hasStatus = colNames.includes('status');
+      if (hasStatus) {
+        db.exec(`
+          INSERT OR IGNORE INTO idempotency_keys_new (key, type, status, result_json, expires_at, created_at, updated_at)
+          SELECT key, type, status, result_json, expires_at, created_at, updated_at FROM idempotency_keys
+        `);
+      } else {
+        db.exec(`
+          INSERT OR IGNORE INTO idempotency_keys_new (key, type, status, result_json, expires_at, created_at)
+          SELECT key, type, 'DONE', result_json, expires_at, created_at FROM idempotency_keys
+        `);
+      }
       db.exec(`DROP TABLE IF EXISTS idempotency_keys`);
       db.exec(`ALTER TABLE idempotency_keys_new RENAME TO idempotency_keys`);
     }
@@ -372,8 +406,8 @@ function ensureIdempotency(key, type) {
     return { isFirst: true };
   }
   const row = getInTransaction(
-    `SELECT status, result_json FROM idempotency_keys WHERE key = ?`,
-    [key]
+    `SELECT status, result_json FROM idempotency_keys WHERE key = ? AND type = ?`,
+    [key, type]
   );
   if (!row) {
     return { isFirst: true };
@@ -390,11 +424,11 @@ function ensureIdempotency(key, type) {
   return { isFirst: true };
 }
 
-function finalizeIdempotency(key, resultObject) {
+function finalizeIdempotency(key, type, resultObject) {
   if (!key) return;
   runInTransaction(
-    `UPDATE idempotency_keys SET status = 'DONE', result_json = ?, updated_at = datetime('now', 'localtime') WHERE key = ?`,
-    [JSON.stringify(resultObject), key]
+    `UPDATE idempotency_keys SET status = 'DONE', result_json = ?, updated_at = datetime('now', 'localtime') WHERE key = ? AND type = ?`,
+    [JSON.stringify(resultObject), key, type]
   );
 }
 

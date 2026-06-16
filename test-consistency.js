@@ -793,6 +793,145 @@ async function doSelfCheck() {
     assert('【调拨】TRANSFER_IN日志应只产生1条', tfInLogCount === 1, `实际TRANSFER_IN日志条数=${tfInLogCount}`);
   }
 
+  section('10. 同业务号跨类型不互斥 + 同类型幂等 + 业务号查询可查到');
+
+  await resetInventory();
+  console.log('  步骤1：已通过盘点将所有库存重置为0');
+
+  await request('/api/stock-in', { method: 'POST' }, {
+    warehouse_id: warehouse1, operator: '场景10打底入库', remark: '场景10：入库100件打底',
+    items: [{ product_id: productId, quantity: 100, unit_price: 1 }]
+  });
+  console.log('  步骤2：已普通入库100件到WH001商品1（不带业务号）');
+
+  const CROSS_BIZ_NO = `BIZ_CROSS_TYPE_${Date.now()}`;
+  console.log(`  步骤3：使用同一业务号 ${CROSS_BIZ_NO} 顺序提交入库(+10)/出库(-3)/调拨(5件)`);
+
+  const crossIn = await request('/api/stock-in', { method: 'POST' }, {
+    business_no: CROSS_BIZ_NO,
+    warehouse_id: warehouse1, operator: '场景10跨类型入库',
+    items: [{ product_id: productId, quantity: 10, unit_price: 1 }]
+  });
+  assert('【跨类型】入库+10应成功(非幂等命中)', crossIn.status === 200 && crossIn.body.success && !crossIn.body.idempotent,
+    `status=${crossIn.status}, success=${crossIn.body?.success}, idempotent=${crossIn.body?.idempotent}`);
+
+  const crossOut = await request('/api/stock-out', { method: 'POST' }, {
+    business_no: CROSS_BIZ_NO,
+    warehouse_id: warehouse1, operator: '场景10跨类型出库',
+    items: [{ product_id: productId, quantity: 3 }]
+  });
+  assert('【跨类型】出库-3应成功(非幂等命中)', crossOut.status === 200 && crossOut.body.success && !crossOut.body.idempotent,
+    `status=${crossOut.status}, success=${crossOut.body?.success}, idempotent=${crossOut.body?.idempotent}`);
+
+  const crossTf = await request('/api/transfers', { method: 'POST' }, {
+    business_no: CROSS_BIZ_NO,
+    from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+    operator: '场景10跨类型调拨',
+    items: [{ product_id: productId, quantity: 5 }]
+  });
+  assert('【跨类型】调拨5件应成功(非幂等命中)', crossTf.status === 200 && crossTf.body.success && !crossTf.body.idempotent,
+    `status=${crossTf.status}, success=${crossTf.body?.success}, idempotent=${crossTf.body?.idempotent}`);
+
+  console.log('  步骤4：断言单据数和库存');
+
+  const crossInDocs = (await request('/api/stock-in')).body.data
+    .filter(d => d.business_no === CROSS_BIZ_NO);
+  const crossOutDocs = (await request('/api/stock-out')).body.data
+    .filter(d => d.business_no === CROSS_BIZ_NO);
+  const crossTfDocs = (await request('/api/transfers')).body.data
+    .filter(d => d.business_no === CROSS_BIZ_NO);
+
+  assert('【跨类型】入库单数=1(该business_no)', crossInDocs.length === 1, `实际=${crossInDocs.length}`);
+  assert('【跨类型】出库单数=1(该business_no)', crossOutDocs.length === 1, `实际=${crossOutDocs.length}`);
+  assert('【跨类型】调拨单数=1(该business_no)', crossTfDocs.length === 1, `实际=${crossTfDocs.length}`);
+
+  const invStep4 = (await request('/api/inventory')).body.data;
+  const w1Step4 = (invStep4.find(r => r.warehouse_id === warehouse1 && r.product_id === productId) || {}).quantity || 0;
+  const w2Step4 = (invStep4.find(r => r.warehouse_id === warehouse2 && r.product_id === productId) || {}).quantity || 0;
+  assert('【跨类型】WH001库存=100+10-3-5=102', w1Step4 === 102, `实际=${w1Step4}`);
+  assert('【跨类型】WH002库存=5', w2Step4 === 5, `实际=${w2Step4}`);
+
+  console.log('  步骤5：同类型幂等 - 入库');
+  const SAME_IN_BIZ = `BIZ_SAME_TYPE_IN_${Date.now()}`;
+  const sameInPromises = [];
+  for (let i = 0; i < 5; i++) {
+    sameInPromises.push(request('/api/stock-in', { method: 'POST' }, {
+      business_no: SAME_IN_BIZ,
+      warehouse_id: warehouse1, operator: `场景10同类型入库#${i}`,
+      items: [{ product_id: productId, quantity: 7, unit_price: 1 }]
+    }));
+  }
+  const sameInResults = await Promise.all(sameInPromises);
+  const sameInSuccess = sameInResults.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+  const sameInIdem = sameInResults.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+  const sameInProc = sameInResults.filter(r => r.status === 409).length;
+  console.log(`  同类型入库: 成功${sameInSuccess}次, 幂等命中${sameInIdem}次, 处理中${sameInProc}次`);
+  assert('【同类型入库】成功1次', sameInSuccess === 1, `实际成功${sameInSuccess}次`);
+  assert('【同类型入库】幂等命中4次(含处理中)', sameInIdem + sameInProc === 4,
+    `幂等${sameInIdem}+处理中${sameInProc}=${sameInIdem + sameInProc}`);
+
+  console.log('  步骤6：同类型幂等 - 出库');
+  const SAME_OUT_BIZ = `BIZ_SAME_TYPE_OUT_${Date.now()}`;
+  const sameOutPromises = [];
+  for (let i = 0; i < 5; i++) {
+    sameOutPromises.push(request('/api/stock-out', { method: 'POST' }, {
+      business_no: SAME_OUT_BIZ,
+      warehouse_id: warehouse1, operator: `场景10同类型出库#${i}`,
+      items: [{ product_id: productId, quantity: 2 }]
+    }));
+  }
+  const sameOutResults = await Promise.all(sameOutPromises);
+  const sameOutSuccess = sameOutResults.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+  const sameOutIdem = sameOutResults.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+  const sameOutProc = sameOutResults.filter(r => r.status === 409).length;
+  console.log(`  同类型出库: 成功${sameOutSuccess}次, 幂等命中${sameOutIdem}次, 处理中${sameOutProc}次`);
+  assert('【同类型出库】成功1次', sameOutSuccess === 1, `实际成功${sameOutSuccess}次`);
+  assert('【同类型出库】幂等命中4次(含处理中)', sameOutIdem + sameOutProc === 4,
+    `幂等${sameOutIdem}+处理中${sameOutProc}=${sameOutIdem + sameOutProc}`);
+
+  console.log('  步骤7：同类型幂等 - 调拨');
+  const SAME_TF_BIZ = `BIZ_SAME_TYPE_TF_${Date.now()}`;
+  const sameTfPromises = [];
+  for (let i = 0; i < 5; i++) {
+    sameTfPromises.push(request('/api/transfers', { method: 'POST' }, {
+      business_no: SAME_TF_BIZ,
+      from_warehouse_id: warehouse1, to_warehouse_id: warehouse2,
+      operator: `场景10同类型调拨#${i}`,
+      items: [{ product_id: productId, quantity: 3 }]
+    }));
+  }
+  const sameTfResults = await Promise.all(sameTfPromises);
+  const sameTfSuccess = sameTfResults.filter(r => r.status === 200 && r.body && r.body.success && !r.body.idempotent).length;
+  const sameTfIdem = sameTfResults.filter(r => r.status === 200 && r.body && r.body.success && r.body.idempotent).length;
+  const sameTfProc = sameTfResults.filter(r => r.status === 409).length;
+  console.log(`  同类型调拨: 成功${sameTfSuccess}次, 幂等命中${sameTfIdem}次, 处理中${sameTfProc}次`);
+  assert('【同类型调拨】成功1次', sameTfSuccess === 1, `实际成功${sameTfSuccess}次`);
+  assert('【同类型调拨】幂等命中4次(含处理中)', sameTfIdem + sameTfProc === 4,
+    `幂等${sameTfIdem}+处理中${sameTfProc}=${sameTfIdem + sameTfProc}`);
+
+  console.log('  步骤8：调用GET /api/business-no 验证');
+  const bizNoResp = (await request(`/api/business-no/${CROSS_BIZ_NO}`)).body;
+  const bizNoData = bizNoResp.data || {};
+  assert('【业务号查询】stock_in_docs.length>=1', bizNoData.stock_in_docs && bizNoData.stock_in_docs.length >= 1,
+    `实际=${bizNoData.stock_in_docs ? bizNoData.stock_in_docs.length : 'null'}`);
+  assert('【业务号查询】stock_out_docs.length>=1', bizNoData.stock_out_docs && bizNoData.stock_out_docs.length >= 1,
+    `实际=${bizNoData.stock_out_docs ? bizNoData.stock_out_docs.length : 'null'}`);
+  assert('【业务号查询】transfer_docs.length>=1', bizNoData.transfer_docs && bizNoData.transfer_docs.length >= 1,
+    `实际=${bizNoData.transfer_docs ? bizNoData.transfer_docs.length : 'null'}`);
+  assert('【业务号查询】total_log_count>=4(入库1+出库1+调拨2)', bizNoData.total_log_count >= 4,
+    `实际=${bizNoData.total_log_count}`);
+
+  console.log('  步骤9：三个列表接口用business_no筛选');
+  const listInByBiz = (await request(`/api/stock-in?business_no=${CROSS_BIZ_NO}`)).body.data || [];
+  const listOutByBiz = (await request(`/api/stock-out?business_no=${CROSS_BIZ_NO}`)).body.data || [];
+  const listTfByBiz = (await request(`/api/transfers?business_no=${CROSS_BIZ_NO}`)).body.data || [];
+  assert('【列表筛选】入库列表筛选返回>=1条', listInByBiz.length >= 1, `实际=${listInByBiz.length}`);
+  assert('【列表筛选】出库列表筛选返回>=1条', listOutByBiz.length >= 1, `实际=${listOutByBiz.length}`);
+  assert('【列表筛选】调拨列表筛选返回>=1条', listTfByBiz.length >= 1, `实际=${listTfByBiz.length}`);
+  assert('【列表筛选】入库列表结果business_no匹配', listInByBiz.every(d => d.business_no === CROSS_BIZ_NO), '存在不匹配项');
+  assert('【列表筛选】出库列表结果business_no匹配', listOutByBiz.every(d => d.business_no === CROSS_BIZ_NO), '存在不匹配项');
+  assert('【列表筛选】调拨列表结果business_no匹配', listTfByBiz.every(d => d.business_no === CROSS_BIZ_NO), '存在不匹配项');
+
   await doSelfCheck();
 
   console.log(`\n═══════════════════════════════════════════════════════════════`);

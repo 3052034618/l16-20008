@@ -97,6 +97,7 @@
       <button data-tab="stocktakes">✅ 库存盘点</button>
       <button data-tab="alerts">⚠️ 库存预警</button>
       <button data-tab="logs">📜 操作日志</button>
+      <button data-tab="bizQuery">🔍 业务号查询</button>
     </div>
 
     <div id="tab-dashboard" class="tab-content hidden">
@@ -135,6 +136,7 @@
           <div class="form-group"><label>商品</label><select id="si-filter-product"><option value="">全部</option></select></div>
           <div class="form-group"><label>仓库</label><select id="si-filter-warehouse"><option value="">全部</option></select></div>
           <div class="form-group"><label>单号</label><input type="text" id="si-filter-docno" placeholder="输入单号"></div>
+          <div class="form-group"><label>业务号</label><input type="text" id="si-filter-bizno" placeholder="业务号/采购单号"></div>
           <div class="form-group"><label>开始日期</label><input type="date" id="si-filter-start"></div>
           <div class="form-group"><label>结束日期</label><input type="date" id="si-filter-end"></div>
           <div class="filter-actions">
@@ -142,7 +144,7 @@
             <button class="btn btn-sm" onclick="resetStockInFilter()">↺ 重置</button>
           </div>
         </div>
-        <table id="stockInTable"><thead><tr><th>单据号</th><th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+        <table id="stockInTable"><thead><tr><th>单据号</th><th>业务号</th><th></th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -153,6 +155,7 @@
           <div class="form-group"><label>商品</label><select id="so-filter-product"><option value="">全部</option></select></div>
           <div class="form-group"><label>仓库</label><select id="so-filter-warehouse"><option value="">全部</option></select></div>
           <div class="form-group"><label>单号</label><input type="text" id="so-filter-docno" placeholder="输入单号"></div>
+          <div class="form-group"><label>业务号</label><input type="text" id="so-filter-bizno" placeholder="业务号/销售单号"></div>
           <div class="form-group"><label>开始日期</label><input type="date" id="so-filter-start"></div>
           <div class="form-group"><label>结束日期</label><input type="date" id="so-filter-end"></div>
           <div class="filter-actions">
@@ -160,7 +163,7 @@
             <button class="btn btn-sm" onclick="resetStockOutFilter()">↺ 重置</button>
           </div>
         </div>
-        <table id="stockOutTable"><thead><tr><th>单据号</th><th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+        <table id="stockOutTable"><thead><tr><th>单据号</th><th>业务号</th><th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -172,6 +175,7 @@
           <div class="form-group"><label>源仓库</label><select id="tf-filter-fromwh"><option value="">全部</option></select></div>
           <div class="form-group"><label>目标仓库</label><select id="tf-filter-towh"><option value="">全部</option></select></div>
           <div class="form-group"><label>单号</label><input type="text" id="tf-filter-docno" placeholder="输入单号"></div>
+          <div class="form-group"><label>业务号</label><input type="text" id="tf-filter-bizno" placeholder="业务号/调拨申请单号"></div>
           <div class="form-group"><label>开始日期</label><input type="date" id="tf-filter-start"></div>
           <div class="form-group"><label>结束日期</label><input type="date" id="tf-filter-end"></div>
           <div class="filter-actions">
@@ -179,7 +183,7 @@
             <button class="btn btn-sm" onclick="resetTransferFilter()">↺ 重置</button>
           </div>
         </div>
-        <table id="transfersTable"><thead><tr><th>调拨单号</th><th>源仓库</th><th>目标仓库</th><th>操作人</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+        <table id="transfersTable"><thead><tr><th>调拨单号</th><th>业务号</th><th></th>源仓库</th><th>目标仓库</th><th>操作人</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -225,6 +229,19 @@
           <div class="form-group"><label>业务类型</label><select id="logRefType" onchange="loadLogs()"><option value="">全部</option><option value="STOCK_IN">入库单</option><option value="STOCK_OUT">出库单</option><option value="TRANSFER_IN">调拨入库</option><option value="TRANSFER_OUT">调拨出库</option><option value="STOCKTAKE">盘点调整</option></select></div>
         </div>
         <table id="logsTable"><thead><tr><th>时间</th><th>商品</th><th>仓库</th><th>变动类型</th><th>变动数量</th><th>变动前</th><th>变动后</th><th>业务类型</th><th>操作人</th><th>备注</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-bizQuery" class="tab-content hidden">
+      <div class="panel">
+        <h2>🔍 业务号查询</h2>
+        <div class="filter-bar">
+          <div class="form-group"><label>业务号</label><input type="text" id="biz-query-no" placeholder="输入业务号，如采购单号/销售单号等"></div>
+          <div class="filter-actions">
+            <button class="btn btn-info btn-sm" onclick="queryBusinessNo()">🔍 查询</button>
+          </div>
+        </div>
+        <div id="biz-query-result"></div>
       </div>
     </div>
   </div>
@@ -293,6 +310,7 @@
         case 'stocktakes': loadStocktakes(); break;
         case 'alerts': loadAlertFilters(); loadAlerts(); break;
         case 'logs': loadLogs(); break;
+        case 'bizQuery': break;
       }
     }
 
@@ -507,6 +525,7 @@
       document.getElementById('si-filter-product').value = '';
       document.getElementById('si-filter-warehouse').value = '';
       document.getElementById('si-filter-docno').value = '';
+      document.getElementById('si-filter-bizno').value = '';
       document.getElementById('si-filter-start').value = '';
       document.getElementById('si-filter-end').value = '';
       loadStockIn();
@@ -517,11 +536,13 @@
       const pid = document.getElementById('si-filter-product')?.value;
       const wid = document.getElementById('si-filter-warehouse')?.value;
       const docno = document.getElementById('si-filter-docno')?.value;
+      const bizno = document.getElementById('si-filter-bizno')?.value;
       const start = document.getElementById('si-filter-start')?.value;
       const end = document.getElementById('si-filter-end')?.value;
       if (pid) params.append('product_id', pid);
       if (wid) params.append('warehouse_id', wid);
       if (docno) params.append('doc_no', docno);
+      if (bizno) params.append('business_no', bizno);
       if (start) params.append('start_date', start);
       if (end) params.append('end_date', end + ' 23:59:59');
       const res = await fetchJSON(`${API}/stock-in?${params.toString()}`);
@@ -529,6 +550,7 @@
       tbody.innerHTML = (res.data || []).map(d => `
         <tr>
           <td><strong>${d.doc_no}</strong></td>
+          <td>${d.business_no || '-'}</td>
           <td>${d.warehouse_name}</td>
           <td>${d.operator || '-'}</td>
           <td>${d.ref_no || '-'}</td>
@@ -554,6 +576,8 @@
       document.getElementById('modalContent').innerHTML = `
         <h3>入库单详情 - ${d.doc_no}</h3>
         <div class="doc-meta">
+          <div class="meta-item"><strong>单号:</strong>${d.doc_no}</div>
+          <div class="meta-item"><strong>业务号:</strong>${d.business_no || '-'}</div>
           <div class="meta-item"><strong>仓库:</strong>${d.warehouse_name}</div>
           <div class="meta-item"><strong>操作人:</strong>${d.operator || '-'}</div>
           <div class="meta-item"><strong>时间:</strong>${d.created_at}</div>
@@ -684,6 +708,7 @@
       document.getElementById('so-filter-product').value = '';
       document.getElementById('so-filter-warehouse').value = '';
       document.getElementById('so-filter-docno').value = '';
+      document.getElementById('so-filter-bizno').value = '';
       document.getElementById('so-filter-start').value = '';
       document.getElementById('so-filter-end').value = '';
       loadStockOut();
@@ -694,11 +719,13 @@
       const pid = document.getElementById('so-filter-product')?.value;
       const wid = document.getElementById('so-filter-warehouse')?.value;
       const docno = document.getElementById('so-filter-docno')?.value;
+      const bizno = document.getElementById('so-filter-bizno')?.value;
       const start = document.getElementById('so-filter-start')?.value;
       const end = document.getElementById('so-filter-end')?.value;
       if (pid) params.append('product_id', pid);
       if (wid) params.append('warehouse_id', wid);
       if (docno) params.append('doc_no', docno);
+      if (bizno) params.append('business_no', bizno);
       if (start) params.append('start_date', start);
       if (end) params.append('end_date', end + ' 23:59:59');
       const res = await fetchJSON(`${API}/stock-out?${params.toString()}`);
@@ -706,6 +733,7 @@
       tbody.innerHTML = (res.data || []).map(d => `
         <tr>
           <td><strong>${d.doc_no}</strong></td>
+          <td>${d.business_no || '-'}</td>
           <td>${d.warehouse_name}</td>
           <td>${d.operator || '-'}</td>
           <td>${d.ref_no || '-'}</td>
@@ -731,6 +759,8 @@
       document.getElementById('modalContent').innerHTML = `
         <h3>出库单详情 - ${d.doc_no}</h3>
         <div class="doc-meta">
+          <div class="meta-item"><strong>单号:</strong>${d.doc_no}</div>
+          <div class="meta-item"><strong>业务号:</strong>${d.business_no || '-'}</div>
           <div class="meta-item"><strong>仓库:</strong>${d.warehouse_name}</div>
           <div class="meta-item"><strong>操作人:</strong>${d.operator || '-'}</div>
           <div class="meta-item"><strong>时间:</strong>${d.created_at}</div>
@@ -863,6 +893,7 @@
       document.getElementById('tf-filter-fromwh').value = '';
       document.getElementById('tf-filter-towh').value = '';
       document.getElementById('tf-filter-docno').value = '';
+      document.getElementById('tf-filter-bizno').value = '';
       document.getElementById('tf-filter-start').value = '';
       document.getElementById('tf-filter-end').value = '';
       loadTransfers();
@@ -874,12 +905,14 @@
       const fromWh = document.getElementById('tf-filter-fromwh')?.value;
       const toWh = document.getElementById('tf-filter-towh')?.value;
       const docno = document.getElementById('tf-filter-docno')?.value;
+      const bizno = document.getElementById('tf-filter-bizno')?.value;
       const start = document.getElementById('tf-filter-start')?.value;
       const end = document.getElementById('tf-filter-end')?.value;
       if (pid) params.append('product_id', pid);
       if (fromWh) params.append('from_warehouse_id', fromWh);
       if (toWh) params.append('to_warehouse_id', toWh);
       if (docno) params.append('doc_no', docno);
+      if (bizno) params.append('business_no', bizno);
       if (start) params.append('start_date', start);
       if (end) params.append('end_date', end + ' 23:59:59');
       const res = await fetchJSON(`${API}/transfers?${params.toString()}`);
@@ -887,6 +920,7 @@
       tbody.innerHTML = (res.data || []).map(t => `
         <tr>
           <td><strong>${t.transfer_no}</strong></td>
+          <td>${t.business_no || '-'}</td>
           <td>${t.from_warehouse_name}</td>
           <td>→ ${t.to_warehouse_name}</td>
           <td>${t.operator || '-'}</td>
@@ -912,6 +946,8 @@
       document.getElementById('modalContent').innerHTML = `
         <h3>调拨单详情 - ${t.transfer_no}</h3>
         <div class="doc-meta">
+          <div class="meta-item"><strong>单号:</strong>${t.transfer_no}</div>
+          <div class="meta-item"><strong>业务号:</strong>${t.business_no || '-'}</div>
           <div class="meta-item"><strong>源仓库:</strong>${t.from_warehouse_name}</div>
           <div class="meta-item"><strong>目标仓库:</strong>${t.to_warehouse_name}</div>
           <div class="meta-item"><strong>操作人:</strong>${t.operator || '-'}</div>
@@ -1241,6 +1277,56 @@
           <td style="font-size:12px;color:#888">${l.remark || '-'}</td>
         </tr>
       `).join('');
+    }
+
+    async function queryBusinessNo() {
+      const no = document.getElementById('biz-query-no').value.trim();
+      if (!no) return showToast('请输入业务号', 'warning');
+      const resultDiv = document.getElementById('biz-query-result');
+      resultDiv.innerHTML = '<p style="color:#888">查询中...</p>';
+      try {
+        const res = await fetchJSON(`${API}/business-no/${encodeURIComponent(no)}`);
+        const data = res.data;
+        if (!data || ((!data.stock_in_list || data.stock_in_list.length === 0) && (!data.stock_out_list || data.stock_out_list.length === 0) && (!data.transfer_list || data.transfer_list.length === 0))) {
+          resultDiv.innerHTML = '<div class="alert-box">未找到该业务号对应的单据</div>';
+          return;
+        }
+        const siList = data.stock_in_list || [];
+        const soList = data.stock_out_list || [];
+        const tfList = data.transfer_list || [];
+        let totalDocs = siList.length + soList.length + tfList.length;
+        let totalLogs = 0;
+        let html = '';
+        if (siList.length > 0) {
+          totalLogs += siList.reduce((s, d) => s + (d.log_count || 0), 0);
+          html += `<div class="detail-section"><h4>📥 入库单（${siList.length}张）</h4>
+            <table><thead><tr><th>单号</th><th>仓库</th><th>操作人</th><th>时间</th><th>明细</th><th>日志数</th><th>操作</th></tr></thead><tbody>
+            ${siList.map(d => `<tr><td><strong>${d.doc_no}</strong></td><td>${d.warehouse_name}</td><td>${d.operator || '-'}</td><td>${d.created_at}</td><td>${(d.items || []).map(i => i.product_name + '×' + i.quantity).join(', ') || '-'}</td><td>${d.log_count || 0}</td><td><button class="btn btn-info btn-sm" onclick="showStockInDetail(${d.id})">查看详情</button></td></tr>`).join('')}
+            </tbody></table></div>`;
+        }
+        if (soList.length > 0) {
+          totalLogs += soList.reduce((s, d) => s + (d.log_count || 0), 0);
+          html += `<div class="detail-section"><h4>📤 出库单（${soList.length}张）</h4>
+            <table><thead><tr><th>单号</th><th>仓库</th><th>操作人</th><th>时间</th><th>明细</th><th>日志数</th><th>操作</th></tr></thead><tbody>
+            ${soList.map(d => `<tr><td><strong>${d.doc_no}</strong></td><td>${d.warehouse_name}</td><td>${d.operator || '-'}</td><td>${d.created_at}</td><td>${(d.items || []).map(i => i.product_name + '×' + i.quantity).join(', ') || '-'}</td><td>${d.log_count || 0}</td><td><button class="btn btn-info btn-sm" onclick="showStockOutDetail(${d.id})">查看详情</button></td></tr>`).join('')}
+            </tbody></table></div>`;
+        }
+        if (tfList.length > 0) {
+          totalLogs += tfList.reduce((s, d) => s + (d.log_count || 0), 0);
+          html += `<div class="detail-section"><h4>🔄 调拨单（${tfList.length}张）</h4>
+            <table><thead><tr><th>单号</th><th>源仓库</th><th>目标仓库</th><th>操作人</th><th>时间</th><th>明细</th><th>日志数</th><th>操作</th></tr></thead><tbody>
+            ${tfList.map(d => `<tr><td><strong>${d.transfer_no}</strong></td><td>${d.from_warehouse_name}</td><td>${d.to_warehouse_name}</td><td>${d.operator || '-'}</td><td>${d.created_at}</td><td>${(d.items || []).map(i => i.product_name + '×' + i.quantity).join(', ') || '-'}</td><td>${d.log_count || 0}</td><td><button class="btn btn-info btn-sm" onclick="showTransferDetail(${d.id})">查看详情</button></td></tr>`).join('')}
+            </tbody></table></div>`;
+        }
+        html += `<div style="margin-top:16px;padding:12px;background:#f0f5ff;border-radius:6px;font-size:14px;color:#333;"><strong>汇总：</strong>该业务号共生成 <strong>${totalDocs}</strong> 张单据，<strong>${totalLogs}</strong> 条库存变动日志</div>`;
+        resultDiv.innerHTML = html;
+      } catch (e) {
+        if (e.status === 404) {
+          resultDiv.innerHTML = '<div class="alert-box">未找到该业务号对应的单据</div>';
+        } else {
+          resultDiv.innerHTML = `<div class="alert-box">查询失败：${e.message}</div>`;
+        }
+      }
     }
 
     const initialTab = location.hash.replace('#', '') || 'dashboard';
