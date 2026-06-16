@@ -1,21 +1,32 @@
 const express = require('express');
 const router = express.Router();
-const { run, get, all, transaction } = require('../db/database');
+const { run, get, all, transaction, checkIdempotency, saveIdempotency } = require('../db/database');
 const { updateInventory, generateDocNo } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
-  const { warehouse_id, start_date, end_date } = req.query;
+  const { warehouse_id, start_date, end_date, product_id, doc_no } = req.query;
   let sql = `
-    SELECT d.*, w.name as warehouse_name
+    SELECT DISTINCT d.*, w.name as warehouse_name
     FROM stock_documents d
     LEFT JOIN warehouses w ON d.warehouse_id = w.id
-    WHERE d.doc_type = 'IN'
   `;
   const params = [];
+  const conditions = [`d.doc_type = 'IN'`];
 
-  if (warehouse_id) { sql += ' AND d.warehouse_id = ?'; params.push(warehouse_id); }
-  if (start_date) { sql += ' AND d.created_at >= ?'; params.push(start_date); }
-  if (end_date) { sql += ' AND d.created_at <= ?'; params.push(end_date); }
+  if (warehouse_id) { conditions.push('d.warehouse_id = ?'); params.push(warehouse_id); }
+  if (doc_no) { conditions.push('d.doc_no LIKE ?'); params.push(`%${doc_no}%`); }
+  if (start_date) { conditions.push('d.created_at >= ?'); params.push(start_date); }
+  if (end_date) { conditions.push('d.created_at <= ?'); params.push(end_date); }
+
+  if (product_id) {
+    sql += `
+      INNER JOIN stock_document_items di ON d.id = di.document_id
+    `;
+    conditions.push('di.product_id = ?');
+    params.push(product_id);
+  }
+
+  sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY d.id DESC';
 
   const docs = all(sql, params);
@@ -39,11 +50,27 @@ router.get('/:id', (req, res) => {
     WHERE i.document_id = ?
   `, [req.params.id]);
 
+  doc.inventory_logs = all(`
+    SELECT il.*, p.name as product_name, p.sku, w.name as warehouse_name
+    FROM inventory_logs il
+    LEFT JOIN products p ON il.product_id = p.id
+    LEFT JOIN warehouses w ON il.warehouse_id = w.id
+    WHERE il.ref_type = 'STOCK_IN' AND il.ref_id = ?
+    ORDER BY il.id
+  `, [req.params.id]);
+
   res.json({ success: true, data: doc });
 });
 
 router.post('/', async (req, res) => {
-  const { warehouse_id, ref_no, operator, remark, items } = req.body;
+  const { request_id, warehouse_id, ref_no, operator, remark, items } = req.body;
+
+  if (request_id) {
+    const cached = await checkIdempotency(request_id);
+    if (cached) {
+      return res.json({ ...cached, idempotent: true });
+    }
+  }
 
   if (!warehouse_id || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ success: false, message: '仓库和商品明细不能为空' });
@@ -108,7 +135,13 @@ router.post('/', async (req, res) => {
       WHERE i.document_id = ?
     `, [result]);
 
-    res.json({ success: true, data: doc, message: '入库成功' });
+    const responseBody = { success: true, data: doc, message: '入库成功' };
+
+    if (request_id) {
+      await saveIdempotency(request_id, 'STOCK_IN', responseBody);
+    }
+
+    res.json(responseBody);
   } catch (err) {
     res.status(err.message === '仓库不存在' ? 404 : 500).json({ success: false, message: err.message });
   }

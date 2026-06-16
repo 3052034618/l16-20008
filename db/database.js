@@ -261,9 +261,22 @@ async function initDatabase() {
     )
   `);
 
+  tables.push(`
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE NOT NULL,
+      type TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
+
   for (const sql of tables) {
     db.run(sql);
   }
+
+  db.run(`DELETE FROM idempotency_keys WHERE expires_at <= datetime('now', 'localtime')`);
 
   const warehouseCount = get('SELECT COUNT(*) as cnt FROM warehouses');
   if (!warehouseCount || warehouseCount.cnt === 0) {
@@ -294,6 +307,34 @@ initDatabase().catch(err => {
   _readyResolve(false);
 });
 
+const IDEMPOTENCY_TTL_DAYS = 30;
+
+function checkIdempotencySync(key) {
+  const row = get(
+    `SELECT result_json FROM idempotency_keys WHERE key = ? AND expires_at > datetime('now', 'localtime')`,
+    [key]
+  );
+  if (row && row.result_json) {
+    return JSON.parse(row.result_json);
+  }
+  return null;
+}
+
+function saveIdempotencySync(key, type, resultJSON) {
+  run(
+    `INSERT OR REPLACE INTO idempotency_keys (key, type, result_json, expires_at) VALUES (?, ?, ?, datetime('now', 'localtime', '+${IDEMPOTENCY_TTL_DAYS} days'))`,
+    [key, type, JSON.stringify(resultJSON)]
+  );
+}
+
+function checkIdempotency(key) {
+  return serializedWrite(() => checkIdempotencySync(key));
+}
+
+function saveIdempotency(key, type, resultJSON) {
+  return serializedWrite(() => saveIdempotencySync(key, type, resultJSON));
+}
+
 module.exports = {
   ready,
   isReady: () => isReady,
@@ -305,5 +346,7 @@ module.exports = {
   exec,
   serialize,
   transaction,
-  runTransactionSync
+  runTransactionSync,
+  checkIdempotency,
+  saveIdempotency
 };

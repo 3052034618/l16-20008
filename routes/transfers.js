@@ -1,25 +1,36 @@
 const express = require('express');
 const router = express.Router();
-const { run, get, all, transaction } = require('../db/database');
+const { run, get, all, transaction, checkIdempotency, saveIdempotency } = require('../db/database');
 const { updateInventory, checkAndCreateLowStockAlert, generateDocNo, getInventory } = require('../utils/inventory');
 
 router.get('/', (req, res) => {
-  const { from_warehouse_id, to_warehouse_id, start_date, end_date } = req.query;
+  const { from_warehouse_id, to_warehouse_id, start_date, end_date, product_id, doc_no } = req.query;
   let sql = `
-    SELECT t.*,
+    SELECT DISTINCT t.*,
            fw.name as from_warehouse_name,
            tw.name as to_warehouse_name
     FROM transfers t
     LEFT JOIN warehouses fw ON t.from_warehouse_id = fw.id
     LEFT JOIN warehouses tw ON t.to_warehouse_id = tw.id
-    WHERE 1=1
   `;
   const params = [];
+  const conditions = [`1=1`];
 
-  if (from_warehouse_id) { sql += ' AND t.from_warehouse_id = ?'; params.push(from_warehouse_id); }
-  if (to_warehouse_id) { sql += ' AND t.to_warehouse_id = ?'; params.push(to_warehouse_id); }
-  if (start_date) { sql += ' AND t.created_at >= ?'; params.push(start_date); }
-  if (end_date) { sql += ' AND t.created_at <= ?'; params.push(end_date); }
+  if (from_warehouse_id) { conditions.push('t.from_warehouse_id = ?'); params.push(from_warehouse_id); }
+  if (to_warehouse_id) { conditions.push('t.to_warehouse_id = ?'); params.push(to_warehouse_id); }
+  if (doc_no) { conditions.push('t.transfer_no LIKE ?'); params.push(`%${doc_no}%`); }
+  if (start_date) { conditions.push('t.created_at >= ?'); params.push(start_date); }
+  if (end_date) { conditions.push('t.created_at <= ?'); params.push(end_date); }
+
+  if (product_id) {
+    sql += `
+      INNER JOIN transfer_items ti ON t.id = ti.transfer_id
+    `;
+    conditions.push('ti.product_id = ?');
+    params.push(product_id);
+  }
+
+  sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY t.id DESC';
 
   const transfers = all(sql, params);
@@ -46,11 +57,27 @@ router.get('/:id', (req, res) => {
     WHERE i.transfer_id = ?
   `, [req.params.id]);
 
+  transfer.inventory_logs = all(`
+    SELECT il.*, p.name as product_name, p.sku, w.name as warehouse_name
+    FROM inventory_logs il
+    LEFT JOIN products p ON il.product_id = p.id
+    LEFT JOIN warehouses w ON il.warehouse_id = w.id
+    WHERE il.ref_type IN ('TRANSFER_OUT', 'TRANSFER_IN') AND il.ref_id = ?
+    ORDER BY il.id
+  `, [req.params.id]);
+
   res.json({ success: true, data: transfer });
 });
 
 router.post('/', async (req, res) => {
-  const { from_warehouse_id, to_warehouse_id, operator, remark, items } = req.body;
+  const { request_id, from_warehouse_id, to_warehouse_id, operator, remark, items } = req.body;
+
+  if (request_id) {
+    const cached = await checkIdempotency(request_id);
+    if (cached) {
+      return res.json({ ...cached, idempotent: true });
+    }
+  }
 
   if (!from_warehouse_id || !to_warehouse_id) {
     return res.status(400).json({ success: false, message: '源仓库和目标仓库不能为空' });
@@ -152,7 +179,13 @@ router.post('/', async (req, res) => {
       message += `，注意：源仓库有${txResult.alerts.length}个商品触发低库存预警`;
     }
 
-    res.json({ success: true, data: transfer, alerts: txResult.alerts, message });
+    const responseBody = { success: true, data: transfer, alerts: txResult.alerts, message };
+
+    if (request_id) {
+      await saveIdempotency(request_id, 'TRANSFER', responseBody);
+    }
+
+    res.json(responseBody);
   } catch (err) {
     const msg = err.message;
     const isClient = /不存在|库存不足|不能相同/.test(msg);
