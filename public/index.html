@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>库存管理系统</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .header h1 { font-size: 24px; font-weight: 600; }
+    .header p { opacity: 0.9; font-size: 14px; margin-top: 4px; }
+    .container { padding: 20px 30px; max-width: 1400px; margin: 0 auto; }
+    .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .nav button { padding: 8px 16px; border: none; background: #f0f0f0; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+    .nav button:hover { background: #e0e0e0; }
+    .nav button.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .panel h2 { font-size: 18px; margin-bottom: 16px; color: #333; display: flex; justify-content: space-between; align-items: center; }
+    .btn { padding: 6px 14px; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+    .btn-primary { background: #52c41a; color: white; }
+    .btn-primary:hover { background: #73d13d; }
+    .btn-info { background: #1890ff; color: white; }
+    .btn-info:hover { background: #40a9ff; }
+    .btn-warning { background: #faad14; color: white; }
+    .btn-warning:hover { background: #ffc53d; }
+    .btn-danger { background: #ff4d4f; color: white; }
+    .btn-danger:hover { background: #ff7875; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+    th { background: #fafafa; font-weight: 600; color: #555; }
+    tr:hover { background: #fafafa; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+    .badge-success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+    .badge-danger { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
+    .badge-warning { background: #fffbe6; color: #faad14; border: 1px solid #ffe58f; }
+    .badge-info { background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; }
+    .alert-box { background: #fff7e6; border: 1px solid #ffd591; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #d46b08; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .form-group { display: flex; flex-direction: column; }
+    .form-group label { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .form-group input, .form-group select, .form-group textarea { padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 5px; font-size: 13px; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #667eea; }
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+    .modal { background: white; border-radius: 8px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+    .modal h3 { margin-bottom: 16px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    .hidden { display: none !important; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: #333; }
+    .stat-card .label { font-size: 13px; color: #888; margin-top: 4px; }
+    .stat-card.danger .value { color: #ff4d4f; }
+    .stat-card.info .value { color: #1890ff; }
+    .items-section { border-top: 1px solid #f0f0f0; margin-top: 12px; padding-top: 12px; }
+    .item-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; align-items: end; }
+    .item-row .form-group { margin-bottom: 0; }
+    .action-col { display: flex; gap: 6px; }
+    .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 6px; color: white; z-index: 2000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.3s ease; }
+    .toast.success { background: #52c41a; }
+    .toast.error { background: #ff4d4f; }
+    .toast.warning { background: #faad14; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .section-subtitle { font-size: 14px; color: #666; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📦 库存管理系统</h1>
+    <p>商品管理 · 出入库单据 · 多仓库调拨 · 库存预警 · 盘点调整</p>
+  </div>
+
+  <div class="container">
+    <div class="nav" id="nav">
+      <button data-tab="dashboard" class="active">📊 仪表盘</button>
+      <button data-tab="products">🛍️ 商品管理</button>
+      <button data-tab="warehouses">🏬 仓库管理</button>
+      <button data-tab="stockIn">📥 入库单</button>
+      <button data-tab="stockOut">📤 出库单</button>
+      <button data-tab="transfers">🔄 仓库调拨</button>
+      <button data-tab="inventory">📋 库存查询</button>
+      <button data-tab="stocktakes">✅ 库存盘点</button>
+      <button data-tab="alerts">⚠️ 库存预警</button>
+      <button data-tab="logs">📜 操作日志</button>
+    </div>
+
+    <div id="tab-dashboard" class="tab-content">
+      <div class="stats-grid" id="dashboardStats"></div>
+      <div class="panel">
+        <h2>最近低库存预警</h2>
+        <div id="recentAlerts"></div>
+      </div>
+      <div class="panel">
+        <h2>最近库存变动</h2>
+        <div id="recentLogs"></div>
+      </div>
+    </div>
+
+    <div id="tab-products" class="tab-content hidden">
+      <div class="panel">
+        <h2>商品列表 <button class="btn btn-primary" onclick="openProductModal()">+ 新增商品</button></h2>
+        <div class="form-grid">
+          <div class="form-group"><label>搜索</label><input type="text" id="productSearch" oninput="loadProducts()" placeholder="名称/SKU/描述"></div>
+        </div>
+        <table id="productsTable"><thead><tr><th>SKU</th><th>名称</th><th>分类</th><th>规格</th><th>单位</th><th>预警阈值</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-warehouses" class="tab-content hidden">
+      <div class="panel">
+        <h2>仓库列表 <button class="btn btn-primary" onclick="openWarehouseModal()">+ 新增仓库</button></h2>
+        <table id="warehousesTable"><thead><tr><th>编码</th><th>名称</th><th>地址</th><th>负责人</th><th>电话</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-stockIn" class="tab-content hidden">
+      <div class="panel">
+        <h2>入库单据 <button class="btn btn-primary" onclick="openStockInModal()">+ 新建入库单</button></h2>
+        <table id="stockInTable"><thead><tr><th>单据号</th><th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-stockOut" class="tab-content hidden">
+      <div class="panel">
+        <h2>出库单据 <button class="btn btn-primary" onclick="openStockOutModal()">+ 新建出库单</button></h2>
+        <table id="stockOutTable"><thead><tr><th>单据号</th><th>仓库</th><th>操作人</th><th>关联单号</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-transfers" class="tab-content hidden">
+      <div class="panel">
+        <h2>调拨单据 <button class="btn btn-primary" onclick="openTransferModal()">+ 新建调拨单</button></h2>
+        <table id="transfersTable"><thead><tr><th>调拨单号</th><th>源仓库</th><th>目标仓库</th><th>操作人</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-inventory" class="tab-content hidden">
+      <div class="panel">
+        <h2>分仓库存明细</h2>
+        <div class="form-grid">
+          <div class="form-group"><label>仓库</label><select id="invWarehouseFilter" onchange="loadInventory()"><option value="">全部</option></select></div>
+          <div class="form-group"><label>搜索</label><input type="text" id="invSearch" oninput="loadInventory()" placeholder="商品名称/SKU"></div>
+          <div class="form-group"><label><input type="checkbox" id="invLowOnly" onchange="loadInventory()"> 只看低库存</label></div>
+        </div>
+        <table id="inventoryTable"><thead><tr><th>仓库</th><th>SKU</th><th>商品</th><th>规格</th><th>库存数量</th><th>预警阈值</th><th>状态</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>商品汇总库存（按商品合并）</h2>
+        <table id="inventorySummaryTable"><thead><tr><th>SKU</th><th>商品</th><th>总库存</th><th>存放仓库数</th><th>最小仓库存</th><th>最大仓库存</th><th>预警阈值</th><th>状态</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-stocktakes" class="tab-content hidden">
+      <div class="panel">
+        <h2>盘点单据 <button class="btn btn-primary" onclick="openStocktakeModal()">+ 新建盘点</button></h2>
+        <table id="stocktakesTable"><thead><tr><th>盘点单号</th><th>仓库</th><th>操作人</th><th>备注</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-alerts" class="tab-content hidden">
+      <div class="panel">
+        <h2>库存预警 <button class="btn btn-warning" onclick="scanAllAlerts()">🔍 扫描全库预警</button></h2>
+        <div class="form-grid">
+          <div class="form-group"><label>状态</label><select id="alertResolved" onchange="loadAlerts()"><option value="">全部</option><option value="false">未处理</option><option value="true">已处理</option></select></div>
+          <div class="form-group"><label>仓库</label><select id="alertWarehouse" onchange="loadAlerts()"><option value="">全部</option></select></div>
+        </div>
+        <table id="alertsTable"><thead><tr><th>商品</th><th>仓库</th><th>当前库存</th><th>预警阈值</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div id="tab-logs" class="tab-content hidden">
+      <div class="panel">
+        <h2>库存变动日志</h2>
+        <div class="form-grid">
+          <div class="form-group"><label>变动类型</label><select id="logType" onchange="loadLogs()"><option value="">全部</option><option value="IN">入库</option><option value="OUT">出库</option><option value="ADJUST">调整</option></select></div>
+          <div class="form-group"><label>业务类型</label><select id="logRefType" onchange="loadLogs()"><option value="">全部</option><option value="STOCK_IN">入库单</option><option value="STOCK_OUT">出库单</option><option value="TRANSFER_IN">调拨入库</option><option value="TRANSFER_OUT">调拨出库</option><option value="STOCKTAKE">盘点调整</option></select></div>
+        </div>
+        <table id="logsTable"><thead><tr><th>时间</th><th>商品</th><th>仓库</th><th>变动类型</th><th>变动数量</th><th>变动前</th><th>变动后</th><th>业务类型</th><th>操作人</th><th>备注</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="modal-overlay hidden">
+    <div class="modal" id="modalContent"></div>
+  </div>
+
+  <script>
+    const API = '/api';
+
+    function showToast(message, type = 'success') {
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.textContent = message;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 3000);
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.add('hidden');
+    }
+    document.getElementById('modal').addEventListener('click', (e) => {
+      if (e.target.id === 'modal') closeModal();
+    });
+
+    document.querySelectorAll('.nav button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        const tab = btn.dataset.tab;
+        document.getElementById(`tab-${tab}`).classList.remove('hidden');
+        refreshTab(tab);
+      });
+    });
+
+    function refreshTab(tab) {
+      switch(tab) {
+        case 'dashboard': loadDashboard(); break;
+        case 'products': loadProducts(); break;
+        case 'warehouses': loadWarehouses(); break;
+        case 'stockIn': loadStockIn(); break;
+        case 'stockOut': loadStockOut(); break;
+        case 'transfers': loadTransfers(); break;
+        case 'inventory': loadInventoryFilters(); loadInventory(); break;
+        case 'stocktakes': loadStocktakes(); break;
+        case 'alerts': loadAlertFilters(); loadAlerts(); break;
+        case 'logs': loadLogs(); break;
+      }
+    }
+
+    async function fetchJSON(url, options = {}) {
+      const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+      return await res.json();
+    }
+
+    async function loadDashboard() {
+      const [invSumRes, alertsRes, logsRes, prodRes, whRes] = await Promise.all([
+        fetchJSON(`${API}/inventory/summary`),
+        fetchJSON(`${API}/alerts?is_resolved=false`),
+        fetchJSON(`${API}/inventory/logs?limit=10`),
+        fetchJSON(`${API}/products`),
+        fetchJSON(`${API}/warehouses`)
+      ]);
+      const totalStock = (invSumRes.data || []).reduce((s, i) => s + (i.total_quantity || 0), 0);
+      const skuCount = (prodRes.data || []).length;
+      const whCount = (whRes.data || []).length;
+      const alertCount = (alertsRes.data || []).length;
+      document.getElementById('dashboardStats').innerHTML = `
+        <div class="stat-card"><div class="value">${skuCount}</div><div class="label">商品SKU数</div></div>
+        <div class="stat-card info"><div class="value">${whCount}</div><div class="label">仓库数</div></div>
+        <div class="stat-card"><div class="value">${totalStock}</div><div class="label">总库存数量</div></div>
+        <div class="stat-card danger"><div class="value">${alertCount}</div><div class="label">未处理预警</div></div>
+      `;
+      const alertHtml = (alertsRes.data || []).length ? `
+        <table><thead><tr><th>商品</th><th>仓库</th><th>当前库存</th><th>阈值</th><th>时间</th></tr></thead>
+        <tbody>${alertsRes.data.slice(0, 5).map(a => `<tr><td>${a.sku} ${a.product_name}</td><td>${a.warehouse_name}</td><td><span class="badge badge-danger">${a.current_quantity}</span></td><td>${a.threshold}</td><td>${a.created_at}</td></tr>`).join('')}</tbody></table>
+      ` : '<p style="color:#888">暂无预警</p>';
+      document.getElementById('recentAlerts').innerHTML = alertHtml;
+      const logHtml = (logsRes.data || []).length ? `
+        <table><thead><tr><th>时间</th><th>商品</th><th>仓库</th><th>类型</th><th>数量</th><th>变动前</th><th>变动后</th></tr></thead>
+        <tbody>${logsRes.data.map(l => `<tr><td>${l.created_at}</td><td>${l.sku} ${l.product_name}</td><td>${l.warehouse_name}</td><td><span class="badge ${l.change_type === 'IN' ? 'badge-success' : l.change_type === 'OUT' ? 'badge-danger' : 'badge-warning'}">${l.change_type === 'IN' ? '入库' : l.change_type === 'OUT' ? '出库' : '调整'}</span></td><td>${l.change_quantity > 0 ? '+' : ''}${l.change_quantity}</td><td>${l.before_quantity}</td><td>${l.after_quantity}</td></tr>`).join('')}</tbody></table>
+      ` : '<p style="color:#888">暂无变动</p>';
+      document.getElementById('recentLogs').innerHTML = logHtml;
+    }
+
+    async function loadProducts() {
+      const keyword = document.getElementById('productSearch').value;
+      const res = await fetchJSON(`${API}/products${keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''}`);
+      const tbody = document.querySelector('#productsTable tbody');
+      tbody.innerHTML = (res.data || []).map(p => `
+        <tr>
+          <td><strong>${p.sku}</strong></td>
+          <td>${p.name}</td>
+          <td>${p.category || '-'}</td>
+          <td>${p.spec || '-'}</td>
+          <td>${p.unit}</td>
+          <td>${p.low_stock_threshold}</td>
+          <td class="action-col">
+            <button class="btn btn-info btn-sm" onclick="openProductModal(${p.id})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteProduct(${p.id}, '${p.name}')">删除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function openProductModal(id = null) {
+      let product = { sku: '', name: '', category: '', unit: '个', spec: '', low_stock_threshold: 10, description: '' };
+      if (id) {
+        const res = await fetchJSON(`${API}/products/${id}`);
+        product = res.data;
+      }
+      document.getElementById('modalContent').innerHTML = `
+        <h3>${id ? '编辑商品' : '新增商品'}</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>SKU *</label><input type="text" id="p-sku" value="${product.sku}"></div>
+          <div class="form-group"><label>名称 *</label><input type="text" id="p-name" value="${product.name}"></div>
+          <div class="form-group"><label>分类</label><input type="text" id="p-category" value="${product.category || ''}"></div>
+          <div class="form-group"><label>单位</label><input type="text" id="p-unit" value="${product.unit}"></div>
+          <div class="form-group"><label>规格</label><input type="text" id="p-spec" value="${product.spec || ''}"></div>
+          <div class="form-group"><label>预警阈值</label><input type="number" id="p-threshold" value="${product.low_stock_threshold}"></div>
+        </div>
+        <div class="form-group"><label>描述</label><textarea id="p-desc" rows="2">${product.description || ''}</textarea></div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveProduct(${id})">保存</button>
+        </div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function saveProduct(id) {
+      const data = {
+        sku: document.getElementById('p-sku').value.trim(),
+        name: document.getElementById('p-name').value.trim(),
+        category: document.getElementById('p-category').value.trim(),
+        unit: document.getElementById('p-unit').value.trim(),
+        spec: document.getElementById('p-spec').value.trim(),
+        low_stock_threshold: parseInt(document.getElementById('p-threshold').value) || 0,
+        description: document.getElementById('p-desc').value.trim()
+      };
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API}/products/${id}` : `${API}/products`;
+      const res = await fetchJSON(url, { method, body: JSON.stringify(data) });
+      if (res.success) { showToast(res.message); closeModal(); loadProducts(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function deleteProduct(id, name) {
+      if (!confirm(`确定删除商品"${name}"吗？`)) return;
+      const res = await fetchJSON(`${API}/products/${id}`, { method: 'DELETE' });
+      if (res.success) { showToast(res.message); loadProducts(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function loadWarehouses() {
+      const res = await fetchJSON(`${API}/warehouses`);
+      const tbody = document.querySelector('#warehousesTable tbody');
+      tbody.innerHTML = (res.data || []).map(w => `
+        <tr>
+          <td><strong>${w.code}</strong></td>
+          <td>${w.name}</td>
+          <td>${w.address || '-'}</td>
+          <td>${w.manager || '-'}</td>
+          <td>${w.phone || '-'}</td>
+          <td><span class="badge ${w.status ? 'badge-success' : 'badge-danger'}">${w.status ? '启用' : '禁用'}</span></td>
+          <td class="action-col">
+            <button class="btn btn-info btn-sm" onclick="openWarehouseModal(${w.id})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteWarehouse(${w.id}, '${w.name}')">删除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function openWarehouseModal(id = null) {
+      let w = { code: '', name: '', address: '', manager: '', phone: '', status: 1 };
+      if (id) {
+        const res = await fetchJSON(`${API}/warehouses/${id}`);
+        w = res.data;
+      }
+      document.getElementById('modalContent').innerHTML = `
+        <h3>${id ? '编辑仓库' : '新增仓库'}</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>编码 *</label><input type="text" id="w-code" value="${w.code}"></div>
+          <div class="form-group"><label>名称 *</label><input type="text" id="w-name" value="${w.name}"></div>
+          <div class="form-group"><label>负责人</label><input type="text" id="w-manager" value="${w.manager || ''}"></div>
+          <div class="form-group"><label>电话</label><input type="text" id="w-phone" value="${w.phone || ''}"></div>
+        </div>
+        <div class="form-group"><label>地址</label><input type="text" id="w-address" value="${w.address || ''}"></div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveWarehouse(${id})">保存</button>
+        </div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function saveWarehouse(id) {
+      const data = {
+        code: document.getElementById('w-code').value.trim(),
+        name: document.getElementById('w-name').value.trim(),
+        address: document.getElementById('w-address').value.trim(),
+        manager: document.getElementById('w-manager').value.trim(),
+        phone: document.getElementById('w-phone').value.trim()
+      };
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API}/warehouses/${id}` : `${API}/warehouses`;
+      const res = await fetchJSON(url, { method, body: JSON.stringify(data) });
+      if (res.success) { showToast(res.message); closeModal(); loadWarehouses(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function deleteWarehouse(id, name) {
+      if (!confirm(`确定删除仓库"${name}"吗？`)) return;
+      const res = await fetchJSON(`${API}/warehouses/${id}`, { method: 'DELETE' });
+      if (res.success) { showToast(res.message); loadWarehouses(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function getWarehouseOptions() {
+      const res = await fetchJSON(`${API}/warehouses`);
+      return (res.data || []).map(w => `<option value="${w.id}">${w.code} - ${w.name}</option>`).join('');
+    }
+
+    async function getProductOptions() {
+      const res = await fetchJSON(`${API}/products`);
+      return (res.data || []).map(p => `<option value="${p.id}">${p.sku} - ${p.name} (${p.unit})</option>`).join('');
+    }
+
+    async function loadStockIn() {
+      const res = await fetchJSON(`${API}/stock-in`);
+      const tbody = document.querySelector('#stockInTable tbody');
+      tbody.innerHTML = (res.data || []).map(d => `
+        <tr>
+          <td><strong>${d.doc_no}</strong></td>
+          <td>${d.warehouse_name}</td>
+          <td>${d.operator || '-'}</td>
+          <td>${d.ref_no || '-'}</td>
+          <td>${d.remark || '-'}</td>
+          <td>${d.created_at}</td>
+          <td><button class="btn btn-info btn-sm" onclick="showStockInDetail(${d.id})">详情</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function showStockInDetail(id) {
+      const res = await fetchJSON(`${API}/stock-in/${id}`);
+      const d = res.data;
+      document.getElementById('modalContent').innerHTML = `
+        <h3>入库单详情 - ${d.doc_no}</h3>
+        <p class="section-subtitle">仓库: ${d.warehouse_name} | 操作人: ${d.operator || '-'} | 时间: ${d.created_at}</p>
+        <p class="section-subtitle">备注: ${d.remark || '-'}</p>
+        <table><thead><tr><th>SKU</th><th>商品</th><th>数量</th><th>单价</th><th>备注</th></tr></thead>
+        <tbody>${(d.items || []).map(i => `<tr><td>${i.sku}</td><td>${i.product_name}</td><td>${i.quantity} ${i.unit}</td><td>¥${i.unit_price || 0}</td><td>${i.remark || '-'}</td></tr>`).join('')}</tbody></table>
+        <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function openStockInModal() {
+      const whOpts = await getWarehouseOptions();
+      const prodOpts = await getProductOptions();
+      document.getElementById('modalContent').innerHTML = `
+        <h3>新建入库单</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>入库仓库 *</label><select id="si-wh">${whOpts}</select></div>
+          <div class="form-group"><label>操作人</label><input type="text" id="si-op" value="管理员"></div>
+          <div class="form-group"><label>关联单号</label><input type="text" id="si-ref"></div>
+        </div>
+        <div class="form-group"><label>备注</label><input type="text" id="si-remark"></div>
+        <div class="items-section">
+          <p class="section-subtitle">商品明细</p>
+          <div id="si-items"></div>
+          <button class="btn btn-info btn-sm" onclick="addStockInItem()">+ 添加商品</button>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="submitStockIn()">确认入库</button>
+        </div>
+      `;
+      window._prodOpts = prodOpts;
+      addStockInItem();
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function addStockInItem() {
+      const div = document.createElement('div');
+      div.className = 'item-row';
+      div.innerHTML = `
+        <div class="form-group"><label>商品</label><select class="si-product">${window._prodOpts}</select></div>
+        <div class="form-group"><label>数量</label><input type="number" class="si-qty" value="1" min="1"></div>
+        <div class="form-group"><label>单价</label><input type="number" class="si-price" value="0" min="0"></div>
+        <div class="form-group"><label>备注</label><input type="text" class="si-remark"></div>
+        <button class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+      `;
+      document.getElementById('si-items').appendChild(div);
+    }
+
+    async function submitStockIn() {
+      const items = Array.from(document.querySelectorAll('#si-items .item-row')).map(row => ({
+        product_id: parseInt(row.querySelector('.si-product').value),
+        quantity: parseInt(row.querySelector('.si-qty').value),
+        unit_price: parseFloat(row.querySelector('.si-price').value) || 0,
+        remark: row.querySelector('.si-remark').value.trim()
+      })).filter(i => i.quantity > 0);
+      if (items.length === 0) return showToast('请添加商品', 'warning');
+      const data = {
+        warehouse_id: parseInt(document.getElementById('si-wh').value),
+        operator: document.getElementById('si-op').value.trim(),
+        ref_no: document.getElementById('si-ref').value.trim(),
+        remark: document.getElementById('si-remark').value.trim(),
+        items
+      };
+      const res = await fetchJSON(`${API}/stock-in`, { method: 'POST', body: JSON.stringify(data) });
+      if (res.success) { showToast(res.message); closeModal(); loadStockIn(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function loadStockOut() {
+      const res = await fetchJSON(`${API}/stock-out`);
+      const tbody = document.querySelector('#stockOutTable tbody');
+      tbody.innerHTML = (res.data || []).map(d => `
+        <tr>
+          <td><strong>${d.doc_no}</strong></td>
+          <td>${d.warehouse_name}</td>
+          <td>${d.operator || '-'}</td>
+          <td>${d.ref_no || '-'}</td>
+          <td>${d.remark || '-'}</td>
+          <td>${d.created_at}</td>
+          <td><button class="btn btn-info btn-sm" onclick="showStockOutDetail(${d.id})">详情</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function showStockOutDetail(id) {
+      const res = await fetchJSON(`${API}/stock-out/${id}`);
+      const d = res.data;
+      document.getElementById('modalContent').innerHTML = `
+        <h3>出库单详情 - ${d.doc_no}</h3>
+        <p class="section-subtitle">仓库: ${d.warehouse_name} | 操作人: ${d.operator || '-'} | 时间: ${d.created_at}</p>
+        <p class="section-subtitle">备注: ${d.remark || '-'}</p>
+        <table><thead><tr><th>SKU</th><th>商品</th><th>数量</th><th>单价</th><th>备注</th></tr></thead>
+        <tbody>${(d.items || []).map(i => `<tr><td>${i.sku}</td><td>${i.product_name}</td><td>${i.quantity} ${i.unit}</td><td>¥${i.unit_price || 0}</td><td>${i.remark || '-'}</td></tr>`).join('')}</tbody></table>
+        <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function openStockOutModal() {
+      const whOpts = await getWarehouseOptions();
+      const prodOpts = await getProductOptions();
+      document.getElementById('modalContent').innerHTML = `
+        <h3>新建出库单</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>出库仓库 *</label><select id="so-wh">${whOpts}</select></div>
+          <div class="form-group"><label>操作人</label><input type="text" id="so-op" value="管理员"></div>
+          <div class="form-group"><label>关联单号</label><input type="text" id="so-ref"></div>
+        </div>
+        <div class="form-group"><label>备注</label><input type="text" id="so-remark"></div>
+        <div class="items-section">
+          <p class="section-subtitle">商品明细</p>
+          <div id="so-items"></div>
+          <button class="btn btn-info btn-sm" onclick="addStockOutItem()">+ 添加商品</button>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="submitStockOut()">确认出库</button>
+        </div>
+      `;
+      window._prodOpts = prodOpts;
+      addStockOutItem();
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function addStockOutItem() {
+      const div = document.createElement('div');
+      div.className = 'item-row';
+      div.innerHTML = `
+        <div class="form-group"><label>商品</label><select class="so-product">${window._prodOpts}</select></div>
+        <div class="form-group"><label>数量</label><input type="number" class="so-qty" value="1" min="1"></div>
+        <div class="form-group"><label>单价</label><input type="number" class="so-price" value="0" min="0"></div>
+        <div class="form-group"><label>备注</label><input type="text" class="so-remark"></div>
+        <button class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+      `;
+      document.getElementById('so-items').appendChild(div);
+    }
+
+    async function submitStockOut() {
+      const items = Array.from(document.querySelectorAll('#so-items .item-row')).map(row => ({
+        product_id: parseInt(row.querySelector('.so-product').value),
+        quantity: parseInt(row.querySelector('.so-qty').value),
+        unit_price: parseFloat(row.querySelector('.so-price').value) || 0,
+        remark: row.querySelector('.so-remark').value.trim()
+      })).filter(i => i.quantity > 0);
+      if (items.length === 0) return showToast('请添加商品', 'warning');
+      const data = {
+        warehouse_id: parseInt(document.getElementById('so-wh').value),
+        operator: document.getElementById('so-op').value.trim(),
+        ref_no: document.getElementById('so-ref').value.trim(),
+        remark: document.getElementById('so-remark').value.trim(),
+        items
+      };
+      const res = await fetchJSON(`${API}/stock-out`, { method: 'POST', body: JSON.stringify(data) });
+      if (res.success) {
+        showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
+        closeModal(); loadStockOut();
+      } else showToast(res.message, 'error');
+    }
+
+    async function loadTransfers() {
+      const res = await fetchJSON(`${API}/transfers`);
+      const tbody = document.querySelector('#transfersTable tbody');
+      tbody.innerHTML = (res.data || []).map(t => `
+        <tr>
+          <td><strong>${t.transfer_no}</strong></td>
+          <td>${t.from_warehouse_name}</td>
+          <td>→ ${t.to_warehouse_name}</td>
+          <td>${t.operator || '-'}</td>
+          <td>${t.remark || '-'}</td>
+          <td>${t.created_at}</td>
+          <td><button class="btn btn-info btn-sm" onclick="showTransferDetail(${t.id})">详情</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function showTransferDetail(id) {
+      const res = await fetchJSON(`${API}/transfers/${id}`);
+      const t = res.data;
+      document.getElementById('modalContent').innerHTML = `
+        <h3>调拨单详情 - ${t.transfer_no}</h3>
+        <p class="section-subtitle">从 ${t.from_warehouse_name} → ${t.to_warehouse_name} | 操作人: ${t.operator || '-'} | 时间: ${t.created_at}</p>
+        <p class="section-subtitle">备注: ${t.remark || '-'}</p>
+        <table><thead><tr><th>SKU</th><th>商品</th><th>数量</th></tr></thead>
+        <tbody>${(t.items || []).map(i => `<tr><td>${i.sku}</td><td>${i.product_name}</td><td>${i.quantity} ${i.unit}</td></tr>`).join('')}</tbody></table>
+        <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function openTransferModal() {
+      const whOpts = await getWarehouseOptions();
+      const prodOpts = await getProductOptions();
+      document.getElementById('modalContent').innerHTML = `
+        <h3>新建调拨单</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>源仓库 *</label><select id="tf-from">${whOpts}</select></div>
+          <div class="form-group"><label>目标仓库 *</label><select id="tf-to">${whOpts}</select></div>
+          <div class="form-group"><label>操作人</label><input type="text" id="tf-op" value="管理员"></div>
+        </div>
+        <div class="form-group"><label>备注</label><input type="text" id="tf-remark"></div>
+        <div class="items-section">
+          <p class="section-subtitle">调拨明细</p>
+          <div id="tf-items"></div>
+          <button class="btn btn-info btn-sm" onclick="addTransferItem()">+ 添加商品</button>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="submitTransfer()">确认调拨</button>
+        </div>
+      `;
+      window._prodOpts = prodOpts;
+      addTransferItem();
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function addTransferItem() {
+      const div = document.createElement('div');
+      div.className = 'item-row';
+      div.innerHTML = `
+        <div class="form-group"><label>商品</label><select class="tf-product">${window._prodOpts}</select></div>
+        <div class="form-group"><label>数量</label><input type="number" class="tf-qty" value="1" min="1"></div>
+        <div class="form-group"></div>
+        <div class="form-group"></div>
+        <button class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+      `;
+      document.getElementById('tf-items').appendChild(div);
+    }
+
+    async function submitTransfer() {
+      const fromWh = parseInt(document.getElementById('tf-from').value);
+      const toWh = parseInt(document.getElementById('tf-to').value);
+      if (fromWh === toWh) return showToast('源仓库和目标仓库不能相同', 'warning');
+      const items = Array.from(document.querySelectorAll('#tf-items .item-row')).map(row => ({
+        product_id: parseInt(row.querySelector('.tf-product').value),
+        quantity: parseInt(row.querySelector('.tf-qty').value)
+      })).filter(i => i.quantity > 0);
+      if (items.length === 0) return showToast('请添加商品', 'warning');
+      const data = {
+        from_warehouse_id: fromWh, to_warehouse_id: toWh,
+        operator: document.getElementById('tf-op').value.trim(),
+        remark: document.getElementById('tf-remark').value.trim(),
+        items
+      };
+      const res = await fetchJSON(`${API}/transfers`, { method: 'POST', body: JSON.stringify(data) });
+      if (res.success) {
+        showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
+        closeModal(); loadTransfers();
+      } else showToast(res.message, 'error');
+    }
+
+    async function loadInventoryFilters() {
+      const res = await fetchJSON(`${API}/warehouses`);
+      const opts = '<option value="">全部</option>' + (res.data || []).map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+      document.getElementById('invWarehouseFilter').innerHTML = opts;
+    }
+
+    async function loadInventory() {
+      const wh = document.getElementById('invWarehouseFilter').value;
+      const kw = document.getElementById('invSearch').value;
+      const low = document.getElementById('invLowOnly').checked;
+      const params = new URLSearchParams();
+      if (wh) params.append('warehouse_id', wh);
+      if (kw) params.append('keyword', kw);
+      if (low) params.append('low_stock_only', 'true');
+      const [invRes, sumRes] = await Promise.all([
+        fetchJSON(`${API}/inventory?${params.toString()}`),
+        fetchJSON(`${API}/inventory/summary${kw ? `?keyword=${encodeURIComponent(kw)}` : ''}`)
+      ]);
+      const tbody = document.querySelector('#inventoryTable tbody');
+      tbody.innerHTML = (invRes.data || []).map(i => `
+        <tr>
+          <td>${i.warehouse_name}</td>
+          <td>${i.sku}</td>
+          <td>${i.product_name}</td>
+          <td>${i.spec || '-'}</td>
+          <td><strong>${i.quantity}</strong> ${i.unit}</td>
+          <td>${i.low_stock_threshold}</td>
+          <td>${i.is_low_stock ? '<span class="badge badge-danger">低库存</span>' : '<span class="badge badge-success">正常</span>'}</td>
+        </tr>
+      `).join('');
+      const sumBody = document.querySelector('#inventorySummaryTable tbody');
+      sumBody.innerHTML = (sumRes.data || []).map(s => `
+        <tr>
+          <td>${s.sku}</td>
+          <td>${s.product_name}</td>
+          <td><strong>${s.total_quantity}</strong> ${s.unit}</td>
+          <td>${s.warehouse_count}</td>
+          <td>${s.min_quantity}</td>
+          <td>${s.max_quantity}</td>
+          <td>${s.low_stock_threshold}</td>
+          <td>${s.is_low_stock ? '<span class="badge badge-danger">低库存</span>' : '<span class="badge badge-success">正常</span>'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadStocktakes() {
+      const res = await fetchJSON(`${API}/stocktakes`);
+      const tbody = document.querySelector('#stocktakesTable tbody');
+      tbody.innerHTML = (res.data || []).map(s => `
+        <tr>
+          <td><strong>${s.stocktake_no}</strong></td>
+          <td>${s.warehouse_name}</td>
+          <td>${s.operator || '-'}</td>
+          <td>${s.remark || '-'}</td>
+          <td>${s.created_at}</td>
+          <td><button class="btn btn-info btn-sm" onclick="showStocktakeDetail(${s.id})">详情</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function showStocktakeDetail(id) {
+      const res = await fetchJSON(`${API}/stocktakes/${id}`);
+      const s = res.data;
+      document.getElementById('modalContent').innerHTML = `
+        <h3>盘点单详情 - ${s.stocktake_no}</h3>
+        <p class="section-subtitle">仓库: ${s.warehouse_name} | 操作人: ${s.operator || '-'} | 时间: ${s.created_at}</p>
+        <p class="section-subtitle">备注: ${s.remark || '-'}</p>
+        <table><thead><tr><th>SKU</th><th>商品</th><th>系统数量</th><th>实盘数量</th><th>差异</th><th>备注</th></tr></thead>
+        <tbody>${(s.items || []).map(i => `<tr><td>${i.sku}</td><td>${i.product_name}</td><td>${i.system_quantity}</td><td>${i.actual_quantity}</td><td class="${i.diff_quantity > 0 ? 'text-success' : i.diff_quantity < 0 ? 'text-danger' : ''}">${i.diff_quantity > 0 ? '+' : ''}${i.diff_quantity}</td><td>${i.remark || '-'}</td></tr>`).join('')}</tbody></table>
+        <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>
+      `;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    async function openStocktakeModal() {
+      const whOpts = await getWarehouseOptions();
+      const prodRes = await fetchJSON(`${API}/products`);
+      const products = prodRes.data || [];
+      document.getElementById('modalContent').innerHTML = `
+        <h3>新建盘点单</h3>
+        <div class="form-grid">
+          <div class="form-group"><label>盘点仓库 *</label><select id="st-wh" onchange="loadStocktakeInventory()">${whOpts}</select></div>
+          <div class="form-group"><label>操作人</label><input type="text" id="st-op" value="管理员"></div>
+        </div>
+        <div class="form-group"><label>备注</label><input type="text" id="st-remark"></div>
+        <div class="items-section">
+          <p class="section-subtitle">盘点明细（选择仓库后会自动加载该仓库当前库存）</p>
+          <div id="st-items"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn btn-primary" onclick="submitStocktake()">确认盘点</button>
+        </div>
+      `;
+      window._products = products;
+      document.getElementById('modal').classList.remove('hidden');
+      await loadStocktakeInventory();
+    }
+
+    async function loadStocktakeInventory() {
+      const whId = document.getElementById('st-wh').value;
+      const res = await fetchJSON(`${API}/inventory${whId ? `?warehouse_id=${whId}` : ''}`);
+      const inv = res.data || [];
+      const html = inv.map(i => `
+        <div class="item-row">
+          <div class="form-group"><label>商品</label><input type="text" value="${i.sku} - ${i.product_name}" readonly></div>
+          <div class="form-group"><label>系统数量</label><input type="number" value="${i.quantity}" readonly></div>
+          <div class="form-group"><label>实盘数量 *</label><input type="number" class="st-actual" data-pid="${i.product_id}" value="${i.quantity}" min="0"></div>
+          <div class="form-group"><label>备注</label><input type="text" class="st-remark"></div>
+          <div></div>
+        </div>
+      `).join('');
+      document.getElementById('st-items').innerHTML = html || '<p style="color:#888">该仓库暂无库存</p>';
+    }
+
+    async function submitStocktake() {
+      const items = Array.from(document.querySelectorAll('#st-items .st-actual')).map(inp => ({
+        product_id: parseInt(inp.dataset.pid),
+        actual_quantity: parseInt(inp.value) || 0,
+        remark: inp.closest('.item-row').querySelector('.st-remark').value.trim()
+      }));
+      if (items.length === 0) return showToast('没有可盘点的商品', 'warning');
+      const data = {
+        warehouse_id: parseInt(document.getElementById('st-wh').value),
+        operator: document.getElementById('st-op').value.trim(),
+        remark: document.getElementById('st-remark').value.trim(),
+        items
+      };
+      const res = await fetchJSON(`${API}/stocktakes`, { method: 'POST', body: JSON.stringify(data) });
+      if (res.success) {
+        showToast(res.message, (res.alerts && res.alerts.length > 0) ? 'warning' : 'success');
+        closeModal(); loadStocktakes();
+      } else showToast(res.message, 'error');
+    }
+
+    async function loadAlertFilters() {
+      const res = await fetchJSON(`${API}/warehouses`);
+      const opts = '<option value="">全部</option>' + (res.data || []).map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+      document.getElementById('alertWarehouse').innerHTML = opts;
+    }
+
+    async function loadAlerts() {
+      const resolved = document.getElementById('alertResolved').value;
+      const wh = document.getElementById('alertWarehouse').value;
+      const params = new URLSearchParams();
+      if (resolved !== '') params.append('is_resolved', resolved);
+      if (wh) params.append('warehouse_id', wh);
+      const res = await fetchJSON(`${API}/alerts?${params.toString()}`);
+      const tbody = document.querySelector('#alertsTable tbody');
+      tbody.innerHTML = (res.data || []).map(a => `
+        <tr>
+          <td>${a.sku} - ${a.product_name}</td>
+          <td>${a.warehouse_name}</td>
+          <td><span class="badge badge-danger">${a.current_quantity}</span></td>
+          <td>${a.threshold}</td>
+          <td>${a.created_at}</td>
+          <td>${a.is_resolved ? '<span class="badge badge-success">已处理</span>' : '<span class="badge badge-warning">未处理</span>'}</td>
+          <td>${!a.is_resolved ? `<button class="btn btn-success btn-sm" onclick="resolveAlert(${a.id})">标记处理</button>` : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function resolveAlert(id) {
+      const res = await fetchJSON(`${API}/alerts/${id}/resolve`, { method: 'PUT' });
+      if (res.success) { showToast(res.message); loadAlerts(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function scanAllAlerts() {
+      const res = await fetchJSON(`${API}/alerts/scan-all`, { method: 'POST' });
+      if (res.success) { showToast(res.message); loadAlerts(); }
+      else showToast(res.message, 'error');
+    }
+
+    async function loadLogs() {
+      const type = document.getElementById('logType')?.value || '';
+      const refType = document.getElementById('logRefType')?.value || '';
+      const params = new URLSearchParams();
+      if (type) params.append('change_type', type);
+      if (refType) params.append('ref_type', refType);
+      params.append('limit', 50);
+      const res = await fetchJSON(`${API}/inventory/logs?${params.toString()}`);
+      const tbody = document.querySelector('#logsTable tbody');
+      tbody.innerHTML = (res.data || []).map(l => `
+        <tr>
+          <td>${l.created_at}</td>
+          <td>${l.sku} ${l.product_name}</td>
+          <td>${l.warehouse_name}</td>
+          <td><span class="badge ${l.change_type === 'IN' ? 'badge-success' : l.change_type === 'OUT' ? 'badge-danger' : 'badge-warning'}">${l.change_type === 'IN' ? '入库' : l.change_type === 'OUT' ? '出库' : '调整'}</span></td>
+          <td style="${l.change_quantity > 0 ? 'color:#52c41a' : l.change_quantity < 0 ? 'color:#ff4d4f' : ''}">${l.change_quantity > 0 ? '+' : ''}${l.change_quantity}</td>
+          <td>${l.before_quantity}</td>
+          <td><strong>${l.after_quantity}</strong></td>
+          <td><span class="badge badge-info">${l.ref_type || '-'}</span></td>
+          <td>${l.operator || '-'}</td>
+          <td style="font-size:12px;color:#888">${l.remark || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>
